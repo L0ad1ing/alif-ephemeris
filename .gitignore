@@ -9,3 +9,5 @@ build/
 tools/_*
 data/packs/
 *.pyd
+data/compact/
+data/expanded_test/
