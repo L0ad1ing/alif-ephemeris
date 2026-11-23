@@ -809,11 +809,12 @@ def _poly_window_plain(fn, span, degree, k):
 _SITE_CACHE: dict = {}
 
 
-def _scalar_topo(jd_tt, body, flags, jd_ut):
+def _scalar_topo(jd_tt, body, flags, jd_ut, topo=None):
     """Topocentric (lon, lat, dist) for one time with plain arithmetic: the fast geocentric position minus the
     observer's offset, plus the diurnal aberration. Matches the full computation to about 0.001 arcsec; the Moon
     (large parallax, second order terms) and speed requests use the full path instead."""
-    topo = _S.topo
+    if topo is None:
+        topo = _S.topo
     if topo is None:
         return None
     geo = _scalar_calc(jd_tt, body, flags & ~(_c.FLG_TOPOCTR | _c.FLG_EQUATORIAL))
@@ -1249,6 +1250,54 @@ _STAR_WINDOWS: dict = {}
 _STAR_LEVELS = [(32.0, 48), (8.0, 20)]
 
 
+_STAR_BY_NAME: dict = {}
+_STARSUB: dict = {}
+
+
+def _scalar_star(index, base, jd_tt, direct):
+    """(lon, lat) of a star from a 16 day polynomial window (degree 11) fitted to the full calculation, or None."""
+    k = math.floor((jd_tt - 2451545.0) / 16.0)
+    key = (index, base, _data_files(), k)
+    win = _STARSUB.get(key)
+    if win is None:
+        if len(_STARSUB) > 30000:
+            _STARSUB.clear()
+        win = False
+        try:
+            h = 8.0 + _SUB_MARGIN
+            centre = 2451545.0 + (k + 0.5) * 16.0
+            cw = math.floor(centre)
+            cf = centre - cw
+            m = 16
+            un = np.cos(np.pi * (np.arange(m) + 0.5) / m)
+            both = np.concatenate([un, _SUB_CHECK])
+            lo, la = direct(float(cw), cf + both * h)
+            lo = np.degrees(np.unwrap(np.radians(np.asarray(lo, dtype=float).reshape(-1))))
+            la = np.asarray(la, dtype=float).reshape(-1)
+            if lo.size == both.size:
+                cheb = np.polynomial.chebyshev
+                cl, cb = cheb.chebfit(un, lo[:m], 11), cheb.chebfit(un, la[:m], 11)
+                err = max(np.abs(cheb.chebval(_SUB_CHECK, cl) - lo[m:]).max(),
+                          np.abs(cheb.chebval(_SUB_CHECK, cb) - la[m:]).max()) * 3600.0
+                if err < 3e-4:
+                    win = (cw, cf, h, cheb.cheb2poly(cl).tolist()[::-1], cheb.cheb2poly(cb).tolist()[::-1])
+        except Exception:
+            win = False
+        _STARSUB[key] = win
+    if win is False:
+        return None
+    cw, cf, h, pl, pb = win
+    u = ((jd_tt - cw) - cf) / h
+    if u > 1.0 or u < -1.0:
+        return None
+    a = b = 0.0
+    for x in pl:
+        a = a * u + x
+    for x in pb:
+        b = b * u + x
+    return a % 360.0, b
+
+
 def _star_window(index, base, whole, frac, direct):
     """Apparent place of a star from a validated Chebyshev window (stars move smoothly), or the full calculation."""
     t = whole + frac
@@ -1290,21 +1339,30 @@ def _star_window(index, base, whole, frac, direct):
 def fixstar(name, jd_et, flags=_c.FLG_SWIEPH):
     """Position of a fixed star at Ephemeris Time. Returns ((lon, lat, dist, ...), star name, flags)."""
     flags = int(flags)
-    try:
-        st = stars.find(_star_key(name))
-    except KeyError:
-        raise Error(f"star {name!r} not found")
-    whole, frac = timescales.split_jd(float(jd_et))
-    whole, frac = float(whole), float(frac)
+    st = _STAR_BY_NAME.get(name)
+    if st is None:
+        try:
+            st = stars.find(_star_key(name))
+        except KeyError:
+            raise Error(f"star {name!r} not found")
+        if isinstance(name, str):
+            _STAR_BY_NAME[name] = st
     kw = _observer_kwargs(flags & ~(_c.FLG_TOPOCTR | _c.FLG_HELCTR | _c.FLG_BARYCTR))
 
     def direct(w, f):
         return stars.apparent(_spk(), st, w, f, deflection=kw["deflection"], aberration=kw["aberration"],
                               nutation=kw["nutation"], frame=kw["frame"], equatorial=kw["equatorial"])
-    lon, lat = _star_window(st.index, flags & ~_c.FLG_SIDEREAL, whole, frac, direct)
-    lon, lat = float(lon), float(lat)
+    base = flags & ~_c.FLG_SIDEREAL
+    jd = float(jd_et)
+    hit = _scalar_star(st.index, base, jd, direct)
+    if hit is None:
+        whole, frac = timescales.split_jd(jd)
+        whole, frac = float(whole), float(frac)
+        lon, lat = _star_window(st.index, base, whole, frac, direct)
+        hit = (float(lon), float(lat))
+    lon, lat = hit
     if flags & _c.FLG_SIDEREAL:
-        lon -= _sidereal_ayanamsa(whole + frac, flags)
+        lon -= _scalar_ayanamsa(jd, flags)[0]
     return (lon % 360.0, lat, 1.0, 0.0, 0.0, 0.0), st.name or str(st.hip), flags
 
 
@@ -1442,10 +1500,35 @@ def sol_eclipse_when_loc(jd_start, geopos, ifl=_c.FLG_SWIEPH, backward=False):
 # ---------------------------------------------------------------------------------------------
 # rise, set, transit
 # ---------------------------------------------------------------------------------------------
+_FAST_RISE = True
+
+
+def _fast_lst(ut, tt, east_lon_deg):
+    return (_gast_rad(ut, tt) + math.radians(east_lon_deg)) % 6.283185307179586
+
+
+def _fast_rise_equatorial(body, tt, site, ut):
+    """(RA, Dec in radians, distance in AU) of a planet seen from `site`, for the rise and set search. Plain arithmetic on
+    the fast windows; the Moon is within 0.3 arcsec of the full computation, the others within 0.001 arcsec."""
+    swe_body = None
+    for k, v in _PLANET_ID_CENTRES.items():
+        if v == body:
+            swe_body = k
+            break
+    if swe_body is None or swe_body not in _SUBSPAN:
+        return None
+    r = _scalar_topo(float(tt), swe_body, _c.FLG_SWIEPH | _c.FLG_EQUATORIAL | _c.FLG_TOPOCTR, float(ut), tuple(site))
+    if r is None:
+        return None
+    return math.radians(r[0]), math.radians(r[1]), r[2]
+
+
 def rise_trans(tjdut, body, rsmi, geopos, atpress=0.0, attemp=0.0, flags=_c.FLG_SWIEPH):
     """Next rising, setting or meridian transit after a UT Julian Day. Returns (0, (time,)) when found, or
     (-2, (0.0,)) when the body does not rise or set (circumpolar)."""
     from . import risetrans
+    risetrans.FAST_EQUATORIAL = _fast_rise_equatorial if _FAST_RISE else None
+    risetrans.FAST_LST = _fast_lst if _FAST_RISE else None
     spk = _spk()
     if isinstance(body, str):
         try:

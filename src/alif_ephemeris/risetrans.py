@@ -36,8 +36,17 @@ def depression_for_apparent(semi_diameter, limb, pressure=0.0, temperature=0.0, 
     return -offset - (horizon_refraction(pressure, temperature) if refraction else 0.0)
 
 
+USE_PREDICTION = True
+FAST_LST = None                 # set by the Swiss-style layer: local apparent sidereal time in radians, quicker
+FAST_EQUATORIAL = None          # set by the Swiss-style layer: a quicker (RA, Dec, distance) for planets from fast windows
+
+
 def _equatorial(spk, body, tt, site, ut, geocentric=False):
     """(RA, Dec) in radians and distance in AU, topocentric apparent for a body, geocentric for a star."""
+    if FAST_EQUATORIAL is not None and not geocentric and not isinstance(body, stars.Star):
+        hit = FAST_EQUATORIAL(body, tt, site, ut)
+        if hit is not None:
+            return hit
     w, f = timescales.split_jd(float(tt))
     if isinstance(body, stars.Star):
         ra, dec = stars.apparent(spk, body, float(w), float(f), equatorial=True)
@@ -52,7 +61,7 @@ def _equatorial(spk, body, tt, site, ut, geocentric=False):
 def _altitude_and_ha(spk, body, ut, site, delta_t, geocentric=False):
     tt = ut + delta_t
     ra, dec, dist = _equatorial(spk, body, tt, site, ut, geocentric)
-    lst = float(sidereal_time.local_apparent_sidereal_time(ut, site[0], tt))
+    lst = FAST_LST(ut, tt, site[0]) if FAST_LST is not None else float(sidereal_time.local_apparent_sidereal_time(ut, site[0], tt))
     ha = lst - ra
     lat = np.radians(site[1])
     alt = np.degrees(np.arcsin(np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(ha)))
@@ -78,12 +87,21 @@ def next_event(spk, body, ut_start, site, kind, delta_t_days, *, limb="upper", r
         return depression_for_apparent(_semi_diameter_deg(body, dist), limb, pressure, temperature, refraction)
 
     def g(ut):
-        alt, ha, _ = _altitude_and_ha(spk, body, ut, site, delta_t_days, geocentric)
+        alt, ha, dist = _altitude_and_ha(spk, body, ut, site, delta_t_days, geocentric)
         if kind in ("rise", "set"):
-            return alt - threshold(ut)
+            if twilight:
+                return alt - TWILIGHT[twilight]
+            return alt - depression_for_apparent(_semi_diameter_deg(body, dist), limb, pressure, temperature, refraction)
         if kind == "upper transit":
             return ha
         return (ha + 360.0) % 360.0 - 180.0          # lower transit: hour angle 180 maps to 0
+
+    # First try a prediction from the hour angle: the body comes back to the same hour angle after about one sidereal
+    # day. Refine inside a short bracket around it; scan blindly (below) only when that does not bracket a sign change.
+    guess = (_predicted_bracket(spk, body, ut_start, site, delta_t_days, kind, g, geocentric, twilight, limb, pressure,
+                                temperature, refraction) if USE_PREDICTION else None)
+    if guess is not None:
+        return guess
 
     step = 20.0 / 1440.0
     t0 = ut_start
@@ -97,4 +115,51 @@ def next_event(spk, body, ut_start, site, kind, delta_t_days, *, limb="upper", r
         if kind == "rise" and up or kind == "set" and down or kind in ("upper transit", "lower transit") and up and abs(v1 - v0) < 90.0:
             return float(brentq(g, t, t1, xtol=1e-10))
         t, v0 = t1, v1
+    return None
+
+
+def _predicted_bracket(spk, body, ut_start, site, delta_t_days, kind, g, geocentric, twilight, limb, pressure, temperature,
+                       refraction):
+    """The next event found from a predicted time, or None to let the caller scan. The prediction uses the declination
+    and hour angle now, so it is exact for fixed stars and within minutes for the Sun, Moon and planets."""
+    import math
+    tt = ut_start + delta_t_days
+    ra, dec, dist = _equatorial(spk, body, tt, site, ut_start, geocentric)
+    lst = FAST_LST(ut_start, tt, site[0]) if FAST_LST is not None else float(sidereal_time.local_apparent_sidereal_time(ut_start, site[0], tt))
+    ha0 = math.degrees(lst - ra)
+    lat = math.radians(site[1])
+    if kind == "upper transit":
+        target = 0.0
+    elif kind == "lower transit":
+        target = 180.0
+    else:
+        if twilight:
+            h0 = TWILIGHT[twilight]
+        else:
+            h0 = depression_for_apparent(_semi_diameter_deg(body, dist), limb, pressure, temperature, refraction)
+        c = (math.sin(math.radians(h0)) - math.sin(lat) * math.sin(dec)) / (math.cos(lat) * math.cos(dec))
+        if abs(c) >= 1.0:
+            return None
+        arc = math.degrees(math.acos(c))
+        target = -arc if kind == "rise" else arc
+    delta = (target - ha0) % 360.0                       # degrees of hour angle still to turn
+    guess = ut_start + delta / 360.98564736629
+    for half in (40.0 / 1440.0, 120.0 / 1440.0):          # try an 80 minute bracket, then a 4 hour one
+        lo, hi = guess - half, guess + half
+        if lo < ut_start:
+            lo = ut_start
+        if hi <= lo:
+            continue
+        glo, ghi = g(lo), g(hi)
+        if kind == "set":
+            ok = glo >= 0.0 > ghi
+        else:
+            ok = glo < 0.0 <= ghi
+        if kind in ("upper transit", "lower transit") and abs(ghi - glo) >= 90.0:
+            ok = False
+        if ok:
+            t = float(brentq(g, lo, hi, xtol=1e-9))
+            if t - ut_start > 0.55:
+                return None                              # let the scan confirm anything this far out
+            return t
     return None
