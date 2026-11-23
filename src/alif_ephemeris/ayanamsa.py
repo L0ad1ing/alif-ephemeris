@@ -89,9 +89,34 @@ def star_ayanamsa(star, target_deg, jd_tt):
     return np.mod(lon - target_deg + 180.0, 360.0) - 180.0
 
 
+# The galactic pole of the IAU 1958 definition (B1950 right ascension 192.25, declination 27.4), turned into a J2000
+# direction with the standard B1950 to J2000 rotation.
+_B1950_TO_J2000 = np.array([[0.9999256794956877, -0.0111814832204662, -0.0048590038153592],
+                            [0.0111814832391717, 0.9999374848933135, -0.0000271625947142],
+                            [0.0048590037723143, -0.0000271702937440, 0.9999881946023742]])
+
+
+def _galactic_pole_j2000():
+    ra, dec = np.radians(192.25), np.radians(27.4)
+    return _B1950_TO_J2000 @ np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+
+
+def galactic_node_longitude(jd_tt):
+    """Tropical longitude (mean equinox of date) where the galactic equator crosses the ecliptic going north."""
+    jd_tt = np.asarray(jd_tt, dtype=float)
+    pole = _galactic_pole_j2000()
+    p = np.einsum("...ij,j->...i", _precession_matrix(jd_tt), pole)
+    e = _mean_equator_to_ecliptic(jd_tt)
+    ye = np.cos(e) * p[..., 1] + np.sin(e) * p[..., 2]
+    # the node direction is (0, 0, 1) x pole_ecliptic = (-ye, x, 0)
+    return np.mod(np.degrees(np.arctan2(p[..., 0], -ye)), 360.0)
+
+
 def value(ay: Ayanamsa, jd_tt):
     """Mean ayanamsa in degrees at Terrestrial Time `jd_tt`."""
     jd_tt = np.asarray(jd_tt, dtype=float)
+    if ay.kind == "galactic node":                       # a0 is added to (node longitude - 240 degrees)
+        return np.mod(galactic_node_longitude(jd_tt) - 240.0 + ay.a0 + 180.0, 360.0) - 180.0
     if ay.kind == "fixed point":
         return fixed_point_ayanamsa(ay.a0, ay.t0, jd_tt)
     if ay.kind == "star":
@@ -130,6 +155,16 @@ register(Ayanamsa("True Mula (Lambda Scorpii 240)", "star", star="Shaula", targe
                   source="lambda Scorpii at 240 degrees"))
 register(Ayanamsa("Galactic Centre 0 Sagittarius", "star", star=_GALACTIC_CENTRE, target=240.0,
                   source="the galactic centre at 0 deg Sagittarius"))
+register(Ayanamsa("Galactic Centre (Gil Brand)", "star", star=_GALACTIC_CENTRE, target=244.376941,
+                  source="the galactic centre at 4 deg 22 min 37 sec Sagittarius"))
+register(Ayanamsa("True Sheoran (Delta Cancri)", "star", star="Asellus Australis", target=103.492642,
+                  source="delta Cancri held 2.507358 degrees before 106 degrees"))
+register(Ayanamsa("Galactic equator (IAU 1958)", "galactic node", a0=0.0,
+                  source="the node of the IAU 1958 galactic equator on the ecliptic of date, held at 240 degrees"))
+register(Ayanamsa("Galactic equator (true)", "galactic node", a0=0.05292,
+                  source="the IAU 1958 galactic equator node, with the true-equator shift of 0.05292 degrees"))
+register(Ayanamsa("Galactic equator (Mula)", "galactic node", a0=-6.613747,
+                  source="the IAU 1958 galactic equator node moved to the Mula nakshatra start"))
 register(Ayanamsa("Galactic Centre 0 Capricorn (Cochrane)", "star", star=_GALACTIC_CENTRE, target=270.0,
                   source="the galactic centre at 0 deg Capricorn"))
 

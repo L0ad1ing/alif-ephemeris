@@ -12,3 +12,11 @@ def test_heliacal_sirius_rising_plausible():
 def test_csroundsec_never_reaches_thirty():
     assert c.csroundsec(10799950) == 10799900 and c.csroundsec(10) == 0 and c.csroundsec(10800030) == 10800000
     assert c.csroundsec(12345) == 12300
+
+
+def test_new_sidereal_modes_have_sane_values():
+    import alif_ephemeris.swe_compat as c
+    jd = 2451545.0
+    for mode, lo, hi in ((30, 22.4, 22.6), (31, 29.9, 30.1), (32, 29.9, 30.2), (33, 23.3, 23.5), (39, 25.1, 25.4)):
+        c.set_sid_mode(mode)
+        assert lo < c.get_ayanamsa_ut(jd) < hi

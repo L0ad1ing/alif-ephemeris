@@ -99,7 +99,7 @@ gives the physically better planet centres with the newest orbits, as NASA Horiz
 - The "true star" sidereal modes (True Citra, True Revati, True Pushya, True Mula) and the galactic-centre modes hold
   the star at its target using the apparent position with annual aberration but without nutation, as the reference
   does (they agree to 0.3 arcsec). The core library's value leaves the aberration out.
-- Sidereal modes 30 to 33, 36 and 39 (several galactic-equator variants and True Sheoran) are not available.
+- Sidereal modes 30, 31, 32, 33 and 39 are built from their published definitions and agree with the reference to about 0.2 arcsec. Mode 36 (Wilhelm galactic centre at Mula) is not available.
 
 ## Bodies added late on 2026-11-22
 - **Vulcan** (`VULCAN`): a heliocentric orbit fitted to the reference over a century (a 0.13744 AU, e 0.019, i 7.5 degrees,
