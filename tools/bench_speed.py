@@ -25,8 +25,9 @@ SPEED, SID, TOPO, EQU, TRUE = 256, 65536, 32768, 2048, 16
 
 
 def bench(fn, n=3000):
-    for i in range(n):          # one full pass first, so every fast window is already built (warm)
-        fn(i)
+    for _ in range(3):          # full passes first, so every fast window is already built (warm)
+        for i in range(n):
+            fn(i)
     t = time.perf_counter()
     for i in range(n):
         fn(i)

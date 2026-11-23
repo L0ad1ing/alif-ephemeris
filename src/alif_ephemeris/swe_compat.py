@@ -522,6 +522,7 @@ def _drop_windows():
     """Forget every fitted window: they depend on the data files, the outer-planet convention and the sidereal mode."""
     _WINDOWS.clear()
     _SUBWIN.clear()
+    _SUBHITS.clear()
     _STARSUB.clear()
     _AYWIN.clear()
     _STAR_WINDOWS.clear()
@@ -687,6 +688,8 @@ _SUBSPAN = {_c.SUN: (8.0, 11), _c.MOON: (1.0, 13), _c.MERCURY: (4.0, 11), _c.VEN
             _c.JUPITER: (16.0, 11), _c.SATURN: (16.0, 11), _c.URANUS: (16.0, 11), _c.NEPTUNE: (16.0, 11),
             _c.PLUTO: (16.0, 11), _c.MEAN_NODE: (8.0, 9), _c.MEAN_APOG: (8.0, 11), _c.TRUE_NODE: (2.0, 11)}
 _SUBWIN: dict = {}
+_SUBHITS: dict = {}
+_SUB_HOT = 64                     # calls into one window before a short polynomial window is fitted for it (about 1.4 ms to fit)
 _SUBWIN_MAX = 30000
 _SCALAR_EXCLUDE = _c.FLG_XYZ | _c.FLG_RADIANS | _c.FLG_TOPOCTR
 _SUB_MARGIN = 0.002
@@ -746,6 +749,14 @@ def _scalar_calc(jd_tt, body, flags):
         key = (body, base, files, li, k)
         win = _SUBWIN.get(key)
         if win is None:
+            # A window costs a few milliseconds to fit, so it only pays for places that are asked about repeatedly. A
+            # sparse sweep (one call every few days) is served by the long windows instead.
+            hits = _SUBHITS.get(key, 0) + 1
+            if hits < _SUB_HOT:
+                if len(_SUBHITS) > 200000:
+                    _SUBHITS.clear()
+                _SUBHITS[key] = hits
+                return None
             if len(_SUBWIN) >= _SUBWIN_MAX:
                 _SUBWIN.clear()
             win = _SUBWIN[key] = _poly_window(_lld_fn(body, base), span, degree, k, 3, _lld_fn(body, base, True))
@@ -789,16 +800,20 @@ def _scalar_ayanamsa(jd_tt, flags, want_rate=False):
     nutation part, when wanted, from the short nutation windows."""
     nonut = bool(flags & _c.FLG_NONUT)
     mode = (_S.sid_mode, _S.sid_t0, _S.sid_ayan_t0, bool(_CONVENTION["outer_barycentres"]))
-    k = math.floor((jd_tt - 2451545.0) / 32.0)
-    key = (mode, k)
-    win = _AYWIN.get(key)
-    if win is None:
-        if len(_AYWIN) > 20000:
-            _AYWIN.clear()
+    win = False
+    for li, span in enumerate((32.0, 16.0, 8.0)):          # the usual window, then shorter ones where it is not exact enough
+        k = math.floor((jd_tt - 2451545.0) / span)
+        key = (mode, li, k)
+        win = _AYWIN.get(key)
+        if win is None:
+            if len(_AYWIN) > 20000:
+                _AYWIN.clear()
 
-        def fn(whole, fracs):
-            return np.array([[_mean_ayanamsa(whole + float(f)) for f in fracs]])
-        win = _AYWIN[key] = _poly_window_plain(fn, 32.0, 7, k)
+            def fn(whole, fracs):
+                return np.array([[_mean_ayanamsa(whole + float(f)) for f in fracs]])
+            win = _AYWIN[key] = _poly_window_plain(fn, span, 7, k)
+        if win is not False:
+            break
     if win is False:                                          # not smooth enough here: the exact value, slower
         a = _mean_ayanamsa(jd_tt)
         r = (_mean_ayanamsa(jd_tt + 0.005) - _mean_ayanamsa(jd_tt - 0.005)) / 0.01 if want_rate else 0.0
@@ -954,7 +969,7 @@ def _simple_position(jd_tt, body, flags):
         win = _WINDOWS.get(key)
         if win is None:
             if len(_WINDOWS) >= _WINDOW_MAX:
-                _drop_windows()
+                _WINDOWS.clear()
             win = _WINDOWS[key] = _build_window(body, flags, span, n, k)
         if win is False:
             continue
@@ -974,16 +989,32 @@ _WINDOWS: dict = {}
 _WINDOW_MAX = 8000
 # per body, window sizes to try from longest to shortest: (length in days, Chebyshev nodes). A window is kept only if
 # it reproduces extra points computed the full way to 0.001 arcsec; otherwise the next shorter one is tried.
-_WINDOW_LEVELS = {_c.MOON: [(16.0, 160), (2.0, 30)], _c.SUN: [(64.0, 64), (16.0, 24)], _c.MERCURY: [(16.0, 64), (4.0, 16)],
-                  _c.VENUS: [(64.0, 96), (16.0, 48), (4.0, 16)], _c.MARS: [(32.0, 96), (8.0, 24)],
-                  _c.JUPITER: [(64.0, 240), (8.0, 60)], _c.SATURN: [(32.0, 40), (8.0, 16)],
+_WINDOW_LEVELS = {_c.MOON: [(16.0, 40), (2.0, 12)], _c.SUN: [(64.0, 56), (16.0, 20)], _c.MERCURY: [(16.0, 64), (4.0, 16)],
+                  _c.VENUS: [(64.0, 96), (16.0, 32), (4.0, 12)], _c.MARS: [(32.0, 40), (8.0, 14)],
+                  _c.JUPITER: [(64.0, 240), (8.0, 20)], _c.SATURN: [(32.0, 40), (8.0, 14)],
                   _c.URANUS: [(128.0, 64), (32.0, 32), (8.0, 16)], _c.NEPTUNE: [(128.0, 64), (32.0, 32), (8.0, 16)],
                   _c.PLUTO: [(128.0, 64), (32.0, 32), (8.0, 16)],
-                  _c.MEAN_NODE: [(128.0, 24), (16.0, 16)], _c.MEAN_APOG: [(32.0, 48), (8.0, 24)],
-                  _c.TRUE_NODE: [(16.0, 80), (4.0, 24)]}
+                  _c.MEAN_NODE: [(128.0, 24), (16.0, 16)], _c.MEAN_APOG: [(32.0, 32), (8.0, 14)],
+                  _c.TRUE_NODE: [(16.0, 28), (4.0, 12)]}
 _WINDOW_MARGIN = 0.03
 _KS: dict = {}
 _CHECK = np.array([-0.93, -0.41, 0.07, 0.52, 0.95])           # extra points, used to validate a fit
+
+
+_DCT: dict = {}
+
+
+def _cheb_interpolate(values):
+    """Chebyshev coefficients of the polynomial through values given at the n Chebyshev nodes cos(pi (i + 1/2) / n):
+    the same answer as a least squares fit with n coefficients, but one small matrix product."""
+    n = values.shape[0]
+    basis = _DCT.get(n)
+    if basis is None:
+        j = np.arange(n)
+        basis = _DCT[n] = np.cos(np.pi * np.outer(j, j + 0.5) / n) * (2.0 / n)
+    coef = basis @ values
+    coef[0] *= 0.5
+    return coef
 
 
 def _build_window(body, base, span, n, k):
@@ -997,7 +1028,7 @@ def _build_window(body, base, span, n, k):
     lon = np.degrees(np.unwrap(np.radians(np.asarray(lon, dtype=float))))
     lat, dist = np.asarray(lat, dtype=float), np.asarray(dist, dtype=float)
     cheb, ev0 = np.polynomial.chebyshev.chebfit, np.polynomial.chebyshev.chebval
-    coef = cheb(xn, np.stack([lon[:n], lat[:n], dist[:n]], axis=1), n - 1)           # one (n, 3) block of coefficients
+    coef = _cheb_interpolate(np.stack([lon[:n], lat[:n], dist[:n]], axis=1))          # one (n, 3) block of coefficients
     fit = ev0(_CHECK, coef)                                                            # (3, 5)
     err = max(np.abs(fit[0] - lon[n:]).max(), np.abs(fit[1] - lat[n:]).max()) * 3600.0
     return (c_whole, c_frac, h, coef) if err < 1e-3 else False
@@ -1058,7 +1089,7 @@ def _fast_lld(body, tt_whole, tt_frac, flags, jd_ut):
         win = _WINDOWS.get(key)
         if win is None:
             if len(_WINDOWS) >= _WINDOW_MAX:
-                _drop_windows()
+                _WINDOWS.clear()
             win = _WINDOWS[key] = _build_window(body, base, span, n, k)
         if win is False:
             continue
