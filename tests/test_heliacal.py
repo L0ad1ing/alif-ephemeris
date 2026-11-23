@@ -10,5 +10,5 @@ def test_heliacal_sirius_rising_plausible():
 
 
 def test_csroundsec_never_reaches_thirty():
-    assert c.csroundsec(10799950) == 10799900
+    assert c.csroundsec(10799950) == 10799900 and c.csroundsec(10) == 0 and c.csroundsec(10800030) == 10800000
     assert c.csroundsec(12345) == 12300

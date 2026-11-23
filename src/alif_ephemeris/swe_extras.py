@@ -879,24 +879,23 @@ def heliacal_ut(tjdut, geopos, datm, dobs, objname, event_type, helflag=_c.FLG_S
     Model: Ptolemy's arcus visionis (classical, documented in docs/SWISS_COMPATIBILITY.md); the atmosphere and observer
     arguments are accepted for compatibility but do not change the result."""
     site = _site(geopos)
+    if int(event_type) not in (1, 2, 3, 4):
+        raise Error("event type %s is not one of 1 (heliacal rising), 2 (heliacal setting), 3 (evening first), 4 (morning last)" % event_type)
     morning, first = _event_kind(event_type)
     key = objname.strip().lower()
     if key in ("sun", "moon"):
         raise Error("heliacal events are for planets and stars")
-    if key in ("mercury", "venus") and event_type in (1, 2):
-        pass
-    elif key in ("mercury", "venus") and event_type in (3, 4):
-        pass
-    elif event_type in (3, 4) and key not in ("mercury", "venus"):
+    if event_type in (3, 4) and key not in ("mercury", "venus"):
         raise Error("%s (event type %d) does not exist for %s" % ("evening first" if event_type == 3 else "morning last", event_type, key))
     mag = _object_magnitude(objname, float(tjdut))
     arcus = _arcus_visionis(objname, mag)
     jd0 = float(tjdut)
     prev_visible = None
-    for day in range(0, 1100):
+    for day in range(0, 800):
         base = jd0 + day
         moment = _visible_on(objname, base - (0.5 if not morning else 0.0), site, morning, arcus)
         if moment is None:
+            prev_visible = None          # a gap (polar summer): do not compare across it
             continue
         alt = _object_altitude(objname, moment, site)
         visible = alt >= 0.0
@@ -926,14 +925,15 @@ def heliacal_ut(tjdut, geopos, datm, dobs, objname, event_type, helflag=_c.FLG_S
 
 
 def heliacal_pheno_ut(tjdut, geopos, datm, dobs, objname, event_type, helflag=_c.FLG_SWIEPH):
-    """Numbers behind a heliacal event at a moment: object altitude, Sun altitude, depression of the Sun needed (arcus
-    visionis), the object's magnitude and its elongation from the Sun. Returned as a 50-slot tuple (the rest zero)."""
+    """Numbers behind a heliacal event at a moment: object altitude, Sun altitude, slots: 0 the depression of the Sun
+    needed (arcus visionis), 1 object altitude, 2 object magnitude, 4 Sun altitude, 5 how much deeper the Sun is than needed.
+    A 50-slot tuple, the rest zero."""
     site = _site(geopos)
     mag = _object_magnitude(objname, float(tjdut))
     arcus = _arcus_visionis(objname, mag)
     alt = _object_altitude(objname, float(tjdut), site)
     sun_alt = _sun_altitude(float(tjdut), site)
-    return (alt, sun_alt, arcus, mag, -sun_alt - arcus) + (0.0,) * 45
+    return (arcus, alt, mag, 0.0, sun_alt, -sun_alt - arcus) + (0.0,) * 44
 
 
 def vis_limit_mag(tjdut, geopos, datm, dobs, objname, helflag=_c.FLG_SWIEPH):
@@ -946,14 +946,15 @@ def vis_limit_mag(tjdut, geopos, datm, dobs, objname, helflag=_c.FLG_SWIEPH):
     depression = max(-sun_alt, 0.0)
     limit = max(-4.6, min(6.5, 1.0 + (depression - 12.0)))
     obj_alt = _object_altitude(objname, float(tjdut), site)
-    return 1.0, (limit, obj_alt, 0.0, sun_alt, 0.0, 0.0, 0.0, _object_magnitude(objname, float(tjdut)))
+    flag = 0 if sun_alt > -6.0 else (-2.0 if obj_alt < 0.0 else 1.0)
+    return flag, (float(limit), float(obj_alt), 0.0, float(sun_alt), 0.0, 0.0, 0.0, float(_object_magnitude(objname, float(tjdut))), 0.0, 0.0)
 
 
 def csroundsec(cs):
-    """Round centiseconds to whole seconds, but 29 degrees 59 minutes 59.5 seconds always down (so it never shows 30 degrees)."""
+    """Round centiseconds to whole seconds, but never up onto a multiple of 30 degrees (29 59 59.5 stays 29 59 59)."""
     cs = int(cs)
     r = (cs + 50) // 100 * 100
-    if r % (30 * 360000) == 0 and cs % (30 * 360000) != 0:
+    if r > cs and r % (30 * 360000) == 0 and cs % (30 * 360000) >= 30 * 360000 - 50:
         r -= 100
     return r
 
