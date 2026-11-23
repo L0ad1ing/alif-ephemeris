@@ -382,14 +382,14 @@ def time_equ(jd_ut):
 
 def lmt_to_lat(jd_lmt, geolon):
     jd_ut = jd_lmt - geolon / 360.0
-    return True, jd_lmt + time_equ(jd_ut)
+    return jd_lmt + time_equ(jd_ut)
 
 
 def lat_to_lmt(jd_lat, geolon):
     jd_lmt = jd_lat
     for _ in range(4):
         jd_lmt = jd_lat - time_equ(jd_lmt - geolon / 360.0)
-    return True, jd_lmt
+    return jd_lmt
 
 
 # ---------------------------------------------------------------------------------------------
@@ -463,11 +463,11 @@ def _star_ayanamsa_with_aberration(spec, tt):
 
 def get_ayanamsa_ex(jd_et, flags=0):
     if np.ndim(jd_et) == 0:
-        return flags, _scalar_ayanamsa(float(jd_et), flags)[0] % 360.0
+        return flags | _c.FLG_SWIEPH, _scalar_ayanamsa(float(jd_et), flags)[0] % 360.0
     ay = _mean_ayanamsa(jd_et)
     if not (flags & _c.FLG_NONUT):
         ay += float(np.degrees(frames.nutation_iau2000a(jd_et)[0]))
-    return flags, ay % 360.0
+    return flags | _c.FLG_SWIEPH, ay % 360.0
 
 
 def get_ayanamsa_ex_ut(jd_ut, flags=0):
@@ -1337,8 +1337,13 @@ def house_name(hsys):
 # ---------------------------------------------------------------------------------------------
 def _star_key(name):
     key = str(name).strip()
-    key = key.split(",")[0] if "," in key and key.split(",")[0].strip() else key.lstrip(",")
-    return key.strip()
+    if key.startswith(","):                                   # ",gaCen": the Bayer code alone
+        return key.lstrip(",").strip()
+    if "," in key:
+        head = key.split(",")[0].strip()
+        if head:
+            return head
+    return key.lstrip(",").strip()
 
 
 _STAR_WINDOWS: dict = {}
@@ -1458,7 +1463,7 @@ def fixstar(name, jd_et, flags=_c.FLG_SWIEPH):
     lon, lat = hit
     if flags & _c.FLG_SIDEREAL:
         lon -= _scalar_ayanamsa(jd, flags)[0]
-    return (lon % 360.0, lat, 1.0, 0.0, 0.0, 0.0), st.name or str(st.hip), flags
+    return (lon % 360.0, lat, 1.0, 0.0, 0.0, 0.0), stars.label(st), flags
 
 
 def fixstar_ut(name, jd_ut, flags=_c.FLG_SWIEPH):
@@ -1472,7 +1477,7 @@ fixstar2_ut = fixstar_ut
 # ---------------------------------------------------------------------------------------------
 # coordinate transforms
 # ---------------------------------------------------------------------------------------------
-def cotrans(xpo, eps):
+def _rotate_x(xpo, eps):
     """Rotate (lon, lat, dist) about the x axis by `eps` degrees: ecliptic to equator for positive eps."""
     lo, la, r = math.radians(xpo[0]), math.radians(xpo[1]), xpo[2]
     e = math.radians(eps)
@@ -1484,9 +1489,20 @@ def cotrans(xpo, eps):
     return (math.degrees(math.atan2(y2, x)) % 360.0, math.degrees(math.asin(max(-1.0, min(1.0, z2)))), float(r))
 
 
+def cotrans(xpo, eps):
+    """Rotate (lon, lat, dist) between the ecliptic and the equator. As in the reference: a negative `eps` goes from the
+    ecliptic to the equator, a positive one from the equator to the ecliptic."""
+    return _rotate_x(xpo, -eps)
+
+
 def cotrans_sp(xpo, eps):
+    """Like cotrans, and the speeds are rotated too (longitude, latitude and distance per day)."""
     lon, lat, r = cotrans(xpo[:3], eps)
-    return (lon, lat, r, xpo[3], xpo[4], xpo[5])
+    h = 1e-4                                                  # speeds by a tiny step along the motion
+    lo, la, dr = float(xpo[3]), float(xpo[4]), float(xpo[5])
+    a = cotrans((xpo[0] + lo * h, xpo[1] + la * h, xpo[2] + dr * h), eps)
+    b = cotrans((xpo[0] - lo * h, xpo[1] - la * h, xpo[2] - dr * h), eps)
+    return (lon, lat, r, ((a[0] - b[0] + 180.0) % 360.0 - 180.0) / (2 * h), (a[1] - b[1]) / (2 * h), (a[2] - b[2]) / (2 * h))
 
 
 def azalt(tjd_ut, calc_flag, geopos, atpress, attemp, xin):
@@ -1499,7 +1515,7 @@ def azalt(tjd_ut, calc_flag, geopos, atpress, attemp, xin):
     lst = ((math.degrees(_gast_rad(tjd_ut, tt)) + float(geopos[0])) % 360.0) + _st_offset_deg(tjd_ut)
     if calc_flag == _c.ECL2HOR:
         eps = math.degrees(_true_obliquity_rad(tt))
-        ra, dec, _ = cotrans((xin[0], xin[1], 1.0), eps)
+        ra, dec, _ = _rotate_x((xin[0], xin[1], 1.0), eps)
     else:
         ra, dec = xin[0], xin[1]
     ha = math.radians(lst - ra)
@@ -1529,7 +1545,7 @@ def azalt_rev(tjd_ut, calc_flag, geopos, xin):
     ra = (lst - np.degrees(ha)) % 360.0
     if calc_flag == _c.HOR2ECL:
         eps = math.degrees(_true_obliquity_rad(tt))
-        lon, lat_, _ = cotrans((ra, float(np.degrees(d)), 1.0), -eps)
+        lon, lat_, _ = _rotate_x((ra, float(np.degrees(d)), 1.0), -eps)
         return lon, lat_
     return float(ra), float(np.degrees(d))
 
@@ -1587,9 +1603,16 @@ def sol_eclipse_when_loc(jd_start, geopos, ifl=_c.FLG_SWIEPH, backward=False):
     t[2] = _ut_from_tt(ecl.second) if ecl.second else 0.0
     t[3] = _ut_from_tt(ecl.third) if ecl.third else 0.0
     t[4] = _ut_from_tt(ecl.fourth)
-    attr = [0.0] * 20
-    attr[0] = ecl.magnitude
-    return ecl.kind, tuple(t), tuple(attr)
+    from . import swe_extras
+    site = tuple(geopos)
+    flag = ecl.kind
+    seen = {0: _c.ECL_MAX_VISIBLE, 1: _c.ECL_1ST_VISIBLE, 2: _c.ECL_2ND_VISIBLE, 3: _c.ECL_3RD_VISIBLE, 4: _c.ECL_4TH_VISIBLE}
+    for slot, bit in seen.items():                               # a contact counts as visible when the Sun is up then
+        if t[slot] and eclipses._sun_altitude(_spk(), _tt_from_ut(t[slot]), site, t[slot]) > -0.5:
+            flag |= bit | _c.ECL_VISIBLE
+    attr = list(swe_extras.sol_eclipse_how(t[0], site, ifl)[1])
+    attr[0] = ecl.magnitude if not attr[0] else attr[0]
+    return flag, tuple(t), tuple(float(x) for x in attr)
 
 
 # ---------------------------------------------------------------------------------------------

@@ -308,3 +308,55 @@ def next_local_solar_eclipse(spk, tt_start, site, delta_t_days, backwards=False)
         ecl = LocalSolarEclipse(tmax, c1, c2, c3, c4, kind, mag)
         if (ecl.maximum > tt_start) == (not backwards):
             return ecl
+
+
+# -------------------------------------------------------------------------------------------------
+# quick existence checks, used to walk back along a Saros series
+# -------------------------------------------------------------------------------------------------
+SAROS_REACH = 0.9985                       # how far into the Earth's disc the penumbra must reach to count as a series member (calibrated on 160 eclipses)
+
+
+def _syzygy_near(spk, tt_guess, target):
+    """The new moon (target 0) or full moon (target 180) within two days of a guessed time, or None."""
+    f = lambda t: (_elong(spk, t) - target + 180.0) % 360.0 - 180.0
+    a, b = tt_guess - 2.0, tt_guess + 2.0
+    fa, fb = f(a), f(b)
+    if not (fa < 0.0 <= fb):
+        return None
+    return float(brentq(f, a, b, xtol=1e-7))
+
+
+def solar_eclipse_near(spk, tt_guess):
+    """Greatest-eclipse time (TT) of a solar eclipse at the new moon nearest a guessed time, or None if there is none.
+    Cheaper than next_solar_eclipse: it only decides whether the shadow reaches the Earth."""
+    t_new = _syzygy_near(spk, tt_guess, 0.0)
+    if t_new is None:
+        return None
+    w, fr = timescales.split_jd(t_new)
+    if abs(np.degrees(positions.observe(spk, planets.MOON, float(w), float(fr), **_TRUE)[1])) > 1.7:
+        return None
+
+    def reach(t):
+        rs, rm = _sun_moon(spk, t)
+        ax = rm - rs
+        L = np.linalg.norm(ax)
+        a = ax / L
+        c = rs - (rs @ a) * a
+        s = float(-rm @ a)
+        pen = R_MOON_SOLAR + s * (R_SUN + R_MOON_SOLAR) / L
+        return float(np.linalg.norm(c)) - pen
+    res = minimize_scalar(reach, bounds=(t_new - 0.3, t_new + 0.3), method="bounded", options={"xatol": 1e-4})
+    return float(res.x) if res.fun < R_EARTH_SOLAR * SAROS_REACH else None
+
+
+def lunar_eclipse_near(spk, tt_guess):
+    """Greatest-eclipse time (TT) of a lunar eclipse at the full moon nearest a guessed time, or None."""
+    t_full = _syzygy_near(spk, tt_guess, 180.0)
+    if t_full is None:
+        return None
+    w, fr = timescales.split_jd(t_full)
+    if abs(np.degrees(positions.observe(spk, planets.MOON, float(w), float(fr), **_TRUE)[1])) > 1.7:
+        return None
+    res = minimize_scalar(lambda t: _lunar_metrics(spk, t)[0] - _lunar_metrics(spk, t)[2], bounds=(t_full - 0.25, t_full + 0.25),
+                          method="bounded", options={"xatol": 1e-4})
+    return float(res.x) if res.fun < R_MOON else None

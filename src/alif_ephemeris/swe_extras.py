@@ -330,12 +330,63 @@ def orbit_max_min_true_distance(tjd_et, ipl, iflag=_c.FLG_SWIEPH):
     return orbits.distance_extremes(_s._spk(), pid, float(tjd_et))
 
 
+def _moon_state(tjd_et, fl):
+    """Geocentric position (AU) and velocity (AU per day) of the Moon in the true ecliptic of date, geometric."""
+    def vec(t):
+        lon, lat, dist = _s.calc(t, _c.MOON, fl | _c.FLG_TRUEPOS)[0][:3]
+        lo, la = math.radians(lon), math.radians(lat)
+        return np.array([dist * math.cos(la) * math.cos(lo), dist * math.cos(la) * math.sin(lo), dist * math.sin(la)])
+    h = 0.002
+    return vec(tjd_et), (vec(tjd_et + h) - vec(tjd_et - h)) / (2 * h)
+
+
+def _moon_nodes_apsides(tjd_et, method, iflag):
+    """The Moon's ascending and descending node, perigee and apogee as (longitude, latitude, distance in AU, 0, 0, 0).
+    The mean method uses the mean node and mean apogee on the mean orbit (a = 0.00256955 AU, e = 0.0549, i = 5.1454 degrees).
+    The osculating method takes the Keplerian orbit that fits the Moon's position and velocity at that moment."""
+    fl = int(iflag) & ~(_c.FLG_SPEED | _c.FLG_SPEED3)
+    if method & (_c.NODBIT_OSCU | _c.NODBIT_OSCU_BAR):
+        r, v = _moon_state(tjd_et, fl)
+        mu = 403503.2 * 86400.0 ** 2 / 149597870.7 ** 3                 # GM of Earth and Moon in AU^3 per day^2
+        h = np.cross(r, v)
+        rn = float(np.linalg.norm(r))
+        ev = np.cross(v, h) / mu - r / rn
+        e = float(np.linalg.norm(ev))
+        p = float(h @ h) / mu
+        e_hat = ev / e
+        h_hat = h / float(np.linalg.norm(h))
+        q_hat = np.cross(h_hat, e_hat)
+        node = np.cross([0.0, 0.0, 1.0], h_hat)
+        node /= float(np.linalg.norm(node))
+
+        def on_orbit(direction):
+            cos_nu = float(direction @ e_hat)
+            rad = p / (1.0 + e * cos_nu)
+            pt = rad * direction
+            lon = math.degrees(math.atan2(pt[1], pt[0])) % 360.0
+            return (lon, math.degrees(math.asin(pt[2] / rad)), rad, 0.0, 0.0, 0.0)
+        return (on_orbit(node), on_orbit(-node), on_orbit(e_hat), on_orbit(-e_hat))
+    node = _s.calc(tjd_et, _c.MEAN_NODE, fl)[0][0]
+    apo = _s.calc(tjd_et, _c.MEAN_APOG, fl)[0][0]
+    peri = (apo + 180.0) % 360.0
+    inc = math.radians(5.145396)
+    a_au, e = 0.00256955, 0.0549
+    p = a_au * (1.0 - e * e)
+
+    def point(lon, anomaly_from_perigee):
+        lat = math.degrees(math.asin(math.sin(inc) * math.sin(math.radians(lon - node))))
+        return (lon % 360.0, lat, p / (1.0 + e * math.cos(math.radians(anomaly_from_perigee))), 0.0, 0.0, 0.0)
+    return (point(node, node - peri), point(node + 180.0, node + 180.0 - peri), point(peri, 0.0), point(apo, 180.0))
+
+
 def nod_aps(tjd_et, ipl, method=_c.NODBIT_MEAN, iflag=_c.FLG_SWIEPH):
     """Ascending node, descending node, perihelion and aphelion of a planet's osculating orbit, as geocentric
     positions (longitude, latitude, distance, speeds 0). The mean and osculating methods give the same result here."""
     from . import orbits
+    if ipl == _c.MOON:
+        return _moon_nodes_apsides(float(tjd_et), method, iflag)
     pid = _s._PLANET_ID_CENTRES.get(ipl)
-    if pid is None or ipl in (_c.SUN, _c.MOON):
+    if pid is None or ipl == _c.SUN:
         raise Error("nodes and apsides are not available for body %d" % ipl)
     jd = float(tjd_et)
     el = orbits.elements(_s._spk(), pid, jd)
@@ -479,7 +530,12 @@ def lun_eclipse_how(tjd_ut, geopos, flags=_c.FLG_SWIEPH):
     flag = _lunar_flag(a) if a["apparent_altitude"] > 0.0 else 0
     attr = [a["umbral"], a["penumbral"], 0.0, 0.0, a["azimuth"], a["altitude"], a["apparent_altitude"],
             a["opposition_distance"], a["umbral"], 0.0, 0.0] + [0.0] * 9
-    return flag, tuple(attr)
+    if a["penumbral"] > 0.0:
+        try:
+            attr[9], attr[10] = (float(x) for x in saros_number(jd, True))
+        except Exception:
+            pass
+    return flag, tuple(float(x) for x in attr)
 
 
 def lun_eclipse_when_loc(tjdut, geopos, flags=_c.FLG_SWIEPH, backwards=False):
@@ -516,6 +572,63 @@ def lun_eclipse_when_loc(tjdut, geopos, flags=_c.FLG_SWIEPH, backwards=False):
     raise Error("no visible lunar eclipse found")
 
 
+# ---------------------------------------------------------------------------------------------
+# Saros series and member numbers
+# ---------------------------------------------------------------------------------------------
+_SYNODIC = 29.530588853
+_NEW_MOON_REF = 2451550.09766                     # mean new moon of 6 January 2000
+_SAROS_LUNATIONS = 223
+_SAROS_FIRST: dict = {}
+
+
+def _saros_k(tmax_ut, lunar):
+    """Index of the lunation that holds the eclipse (new moon index for solar, full moon for lunar)."""
+    return int(round((float(tmax_ut) - _NEW_MOON_REF) / _SYNODIC - (0.5 if lunar else 0.0)))
+
+
+def saros_number(tmax_ut, lunar=False):
+    """(series number, member number) of the eclipse whose greatest phase is at `tmax_ut` (UT).
+
+    A Saros series repeats every 223 lunations, so the lunation index k of every member satisfies
+    k = b + 135 s (mod 223) for the series number s. The offset b is 44 for solar and 208 for lunar eclipses. The
+    member number counts the earlier eclipses of the series, found by stepping back one Saros at a time."""
+    from . import eclipses
+    k = _saros_k(tmax_ut, lunar)
+    b0 = 208 if lunar else 44
+    series = ((k - b0) * pow(135, -1, 223)) % 223
+    key = (bool(lunar), series)
+    first_k = _SAROS_FIRST.get(key)
+    if first_k is not None and first_k <= k and (k - first_k) % _SAROS_LUNATIONS == 0:
+        return series, (k - first_k) // _SAROS_LUNATIONS + 1
+    spk = _s._spk()
+    near = eclipses.lunar_eclipse_near if lunar else eclipses.solar_eclipse_near
+    t0 = float(tmax_ut)
+
+    def exists(steps):
+        guess = t0 - steps * (_SAROS_LUNATIONS * _SYNODIC + 0.0000) - 0.3 * steps / max(steps, 1) * 0.0
+        found = near(spk, _s._tt_from_ut(guess))
+        return found is not None
+    # Members exist without a gap from the start of the series up to this one. Gallop back to the first step with no
+    # eclipse, then bisect. Needs ephemeris data far enough back; without it only the series number is known.
+    try:
+        lo, hi = 0, 1
+        while exists(hi):
+            lo, hi = hi, hi * 2
+            if hi > 160:
+                raise ValueError("series too long")
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if exists(mid):
+                lo = mid
+            else:
+                hi = mid
+    except Exception:
+        return series, 0
+    first_k = k - lo * _SAROS_LUNATIONS
+    _SAROS_FIRST[key] = first_k
+    return series, lo + 1
+
+
 def sol_eclipse_how(tjd_ut, geopos, flags=_c.FLG_SWIEPH):
     """Attributes of a solar eclipse at a place and moment: attr[0] fraction of the Sun's diameter covered,
     [1] ratio of the Moon's to the Sun's diameter, [2] fraction of the disc covered, [3] core shadow diameter (km),
@@ -525,13 +638,18 @@ def sol_eclipse_how(tjd_ut, geopos, flags=_c.FLG_SWIEPH):
     a = eclipse_attrs.solar_attributes(_s._spk(), _s._tt_from_ut(jd), _site(geopos), jd)
     if a["magnitude"] <= 0.0 or a["apparent_altitude"] <= 0.0:
         flag = 0
-    elif a["magnitude"] >= 1.0:
+    elif (a["diameter_ratio"] >= 1.0 and a["magnitude"] >= 1.0) or (a["diameter_ratio"] < 1.0 and a["magnitude"] >= a["diameter_ratio"]):
         flag = (_c.ECL_TOTAL if a["diameter_ratio"] >= 1.0 else _c.ECL_ANNULAR) | _c.ECL_CENTRAL | _c.ECL_VISIBLE
     else:
         flag = _c.ECL_PARTIAL | _c.ECL_NONCENTRAL | _c.ECL_VISIBLE
     attr = [a["magnitude"], a["diameter_ratio"], a["obscuration"], a["core_shadow_km"], a["azimuth"], a["altitude"],
             a["apparent_altitude"], a["separation"], a["magnitude"], 0.0, 0.0] + [0.0] * 9
-    return flag, tuple(attr)
+    if a["magnitude"] > 0.0:
+        try:
+            attr[9], attr[10] = (float(x) for x in saros_number(jd, False))
+        except Exception:
+            pass
+    return flag, tuple(float(x) for x in attr)
 
 
 def sol_eclipse_where(tjd_ut, flags=_c.FLG_SWIEPH):
@@ -566,8 +684,13 @@ def sol_eclipse_where(tjd_ut, flags=_c.FLG_SWIEPH):
         attr[2] = a2["diameter_ratio"] ** 2
     else:
         flag = _c.ECL_PARTIAL
-    attr = tuple(attr)
-    return flag | (_c.ECL_CENTRAL if central else _c.ECL_NONCENTRAL), (lon, lat), attr
+    if a2["magnitude"] > 0.0 or central:
+        try:
+            attr[9], attr[10] = (float(x) for x in saros_number(jd, False))
+        except Exception:
+            pass
+    attr = tuple(float(x) for x in attr)
+    return flag | (_c.ECL_CENTRAL if central else _c.ECL_NONCENTRAL), (lon, lat) + (0.0,) * 8, attr
 
 
 for _n in ("lun_eclipse_how", "lun_eclipse_when_loc", "sol_eclipse_how", "sol_eclipse_where"):

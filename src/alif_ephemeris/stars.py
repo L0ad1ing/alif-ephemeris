@@ -28,6 +28,17 @@ J2000 = 2451545.0
 def _catalogue():
     d = np.load(Path(__file__).with_name("data") / "stars.npz")
     cat = {k: d[k] for k in d}
+    # a few named star clusters that astrologers use as fixed points (J2000 centres, no motion): the Beehive (M44),
+    # the Scorpion's sting (M6), the arrow point (M8 with NGC 6530) and the face of Sagittarius (M22)
+    clusters = [("Praesepe Cluster", 130.030, 19.982, 3.7), ("Aculeus", 265.068, -32.200, 4.2),
+                ("Spiculum", 271.119, -24.367, 4.6), ("Facies", 279.095, -23.904, 5.1)]
+    n = len(cat["hip"])
+    for key, col in (("hip", None), ("ra", None), ("dec", None), ("plx", 0.0), ("pmra", 0.0), ("pmdec", 0.0), ("vmag", None),
+                     ("name", None), ("designation", ""), ("constellation", "")):
+        extra = []
+        for k, (nm, ra, dec, mag) in enumerate(clusters):
+            extra.append({"hip": -(k + 1), "ra": ra, "dec": dec, "vmag": mag, "name": nm}.get(key, col))
+        cat[key] = np.concatenate([cat[key], np.array(extra, dtype=cat[key].dtype)])
     cat["_by_hip"] = {int(h): i for i, h in enumerate(cat["hip"])}
     cat["_by_name"] = {}
     for i, n in enumerate(cat["name"]):
@@ -59,15 +70,32 @@ def _bayer():
     return out
 
 
+_TRADITIONAL = {"sirrah": 677, "graffias": 78820, "sinistra": 88048, "muhlifain": 61932, "praesepe": -1}
+_BAYER_EXTRA = {"nuOph": 88048, "gaCen": 61932}
+
+
+def label(star: Star) -> str:
+    """The star's name as the reference prints it: traditional name, a comma and the Bayer code (Spica,alVir)."""
+    codes = {hip: code for code, hip in {**_bayer(), **_BAYER_EXTRA}.items()}
+    name = star.name or {88048: "Sinistra", 61932: "Muhlifain"}.get(star.hip, "")
+    code = codes.get(star.hip)
+    if name and code:
+        return f"{name},{code}"
+    return name or str(star.hip)
+
+
 def find(key) -> Star:
     """Look up a star by IAU name (case-insensitive) or Hipparcos number."""
     cat = _catalogue()
+    if isinstance(key, str) and key.strip().lower() in _TRADITIONAL:
+        key = _TRADITIONAL[key.strip().lower()]
     if isinstance(key, (int, np.integer)) or (isinstance(key, str) and key.strip().isdigit()):
         i = cat["_by_hip"].get(int(key))
     else:
         i = cat["_by_name"].get(str(key).strip().lower())
         if i is None:                                           # Bayer codes as astrology software writes them: alLeo, al-2Lib
-            hip = _bayer().get(str(key).strip().lstrip(","))
+            code = str(key).strip().lstrip(",")
+            hip = _bayer().get(code) or _BAYER_EXTRA.get(code)
             i = cat["_by_hip"].get(hip) if hip else None
     if i is None:
         raise KeyError(f"star {key!r} not found (Hipparcos stars brighter than V 6.6 and IAU names)")

@@ -127,7 +127,9 @@ def test_lunar_eclipse_attributes_and_visibility(swe):
 @needs
 def test_solar_eclipse_attributes_and_where(swe):
     flag, tret = swe.sol_eclipse_when_glob(2461000.5, swe.FLG_SWIEPH, 0, False)
-    kind, (lon, lat), attr = swe.sol_eclipse_where(tret[0])
+    kind, geopos, attr = swe.sol_eclipse_where(tret[0])
+    lon, lat = geopos[0], geopos[1]
+    assert len(geopos) == 10 and len(attr) == 20 and attr[9] > 0 and attr[10] > 0           # Saros series and member
     assert kind & swe.ECL_CENTRAL and -180 <= lon <= 180 and abs(lat) < 90
     assert 0.9 < attr[0] < 1.1 and 0.9 < attr[1] < 1.1
     how, a = swe.sol_eclipse_how(tret[0], (lon, lat, 0.0))
