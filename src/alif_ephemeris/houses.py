@@ -53,13 +53,9 @@ def midheaven_from(ramc_deg, eps_deg):
 def vertex_from(ramc_deg, eps_deg, lat_deg):
     """The western intersection of the prime vertical with the ecliptic.
 
-    The prime vertical is the great circle through the east, west, zenith and nadir points. Its plane is
-    perpendicular to the north-south line of the horizon.
-    """
-    mc = float(midheaven_from(ramc_deg, eps_deg))
-    n_pt = _horizon_ns(lat_deg)
-    # points west of the meridian have longitudes between MC - 180 and MC
-    return _circle_ecliptic_cusp(n_pt, eps_deg, ramc_deg, (mc, -1.0, 180.0))
+    The prime vertical is the horizon of an observer at co-latitude (90 - latitude) whose meridian lies
+    180 degrees away in sidereal time, so the vertex is that observer's Ascendant."""
+    return ascendant_from(ramc_deg + 180.0, eps_deg, 90.0 - lat_deg)
 
 
 def _ecl_to_vec_local(lon_deg, eps_deg, ramc_deg):
@@ -195,7 +191,7 @@ def _placidus(ramc, eps, lat, arcs, asc, mc):
             ra = ramc + frac * dsa if from_noon else ramc + 180.0 - frac * (180.0 - dsa)
             a = math.radians(ra)
             new = math.degrees(math.atan2(math.sin(a), math.cos(a) * cos_e)) % 360.0
-            done = abs((new - lon + 180.0) % 360.0 - 180.0) < 1e-9
+            done = abs((new - lon + 180.0) % 360.0 - 180.0) < 1e-8
             lon = new
             if done:
                 break
