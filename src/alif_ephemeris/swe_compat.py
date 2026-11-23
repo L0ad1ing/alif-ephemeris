@@ -1127,7 +1127,7 @@ def _gauquelin_houses(jd_ut, lat, lon, tt, flags):
     return tuple(cusps), tuple(ascmc)
 
 
-def _houses_placidus_fast(ramc, eps, lat):
+def _houses_placidus_py(ramc, eps, lat):
     """Placidus cusps and angles for one place and time with plain arithmetic: (cusps[12], asc, mc, vertex, equasc)
     in degrees, or None when the method fails (inside the polar circles) so the general code takes over."""
     pi, tau = math.pi, 2.0 * math.pi
@@ -1186,6 +1186,14 @@ def _houses_placidus_fast(ramc, eps, lat):
         c[h - 1] = deg(cus[h])
         c[o - 1] = deg((cus[h] + pi) % tau)
     return c, c[0], c[9], deg(vtx), deg(equasc)
+
+
+try:                                                    # the compiled twin (csrc/alif_core.c), when it was built
+    from . import _core
+    _houses_placidus_fast = _core.placidus
+except ImportError:
+    _core = None
+    _houses_placidus_fast = _houses_placidus_py
 
 
 def houses_ex(jd_ut, lat, lon, hsys=b"P", flags=0):
