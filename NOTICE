@@ -1,0 +1,47 @@
+Alif Ephemeris
+Copyright 2026 AlifAstrology.com
+
+This product was created by AlifAstrology.com (https://alifastrology.com).
+Help and questions: info@alifastrology.com
+
+If you use Alif Ephemeris in your software, website or research, please keep this
+NOTICE file with your copy and credit "Alif Ephemeris by AlifAstrology.com".
+The Apache License 2.0 (see LICENSE) requires that you keep this notice in
+redistributed copies. A visible credit in your product (an About page or a
+credits page) is not required by the licence but is warmly appreciated.
+
+Third-party material
+--------------------
+- Planetary positions are computed from the JPL Development Ephemeris (DE440/DE441),
+  produced by NASA's Jet Propulsion Laboratory. These data are in the public domain.
+  https://naif.jpl.nasa.gov/naif/data_generic.html
+- Planet-centre offsets and the newer Uranus and Neptune orbits are refitted from NASA/JPL satellite
+  ephemerides (jup365, sat441, ura184, nep098, plu060). Public domain. Our compact file is
+  src/alif_ephemeris/data/planet_centres.npz, built by tools/build_planet_centres.py.
+- NASA JPL Horizons (https://ssd.jpl.nasa.gov/horizons/) answers are used as the official reference in tests, and
+  its orbit solutions for the asteroids and centaurs are refitted into src/alif_ephemeris/data/smallbodies.npz
+  (tools/build_smallbodies.py). NASA/JPL data, public domain.
+- The semi-major axes of the hypothetical bodies are the published values of their authors (Witte, Sieggrun,
+  Harrington, Lowell, Pickering, Leverrier, Adams); the remaining elements were recovered numerically.
+- The IAU 2000A nutation series coefficients and IAU 2006 precession model are
+  published international standards (IAU SOFA/IERS Conventions). The coefficient
+  tables in data/ were checked against, and in part taken from, Skyfield
+  (MIT License, Copyright Brandon Rhodes) and ERFA (BSD 3-Clause).
+- Observed and predicted values of delta-T (the difference between Terrestrial Time and Universal
+  Time) are from the United States Naval Observatory, Earth Orientation Department
+  (https://maia.usno.navy.mil/ser7/). US Government data, public domain.
+- Historical delta-T: the Stephenson, Morrison and Hohenkerk spline model (Proc. R. Soc. A 472, 2016;
+  table S15, updated 2020 by Morrison, Stephenson, Hohenkerk and Zawilski). Published model
+  parameters, checked against Skyfield (MIT).
+- Fixed stars: the ESA Hipparcos catalogue (1997), obtained through NASA HEASARC, and the official proper names
+  from the International Astronomical Union Working Group on Star Names (Creative Commons Attribution).
+- The IERS Conventions 2010 table of complementary terms of the equation of the equinoxes (an international
+  standard), checked against Skyfield and SOFA.
+- Mean lunar node and apogee: the polynomials of Jean Meeus, Astronomical Algorithms (from ELP-2000/82).
+- Bayer codes of the named stars (src/alif_ephemeris/data/star_bayer.txt) come from the same IAU Catalog of Star Names.
+- Planetary phenomena use the magnitude formulas of Mallama and Hilton (2018), published for The Astronomical Almanac.
+- Orbital elements, refraction (Saemundsson, Bennett and the usual tangent series) and the house systems use published
+  geometry. The orbits of the hypothetical bodies are explained in docs/CLEAN_ROOM.md.
+- JHora's printed ayanamsa values are used only as test reference numbers.
+- Skyfield, jplephem and pyswisseph are used only as development-time test oracles
+  to compare numbers. They are not part of the shipped package.

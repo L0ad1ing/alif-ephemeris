@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alif-ephemeris"
+version = "1.0.0"
+description = "A free, open-source ephemeris for astrology and astronomy. By AlifAstrology.com."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = ["ephemeris", "astrology", "astronomy", "swiss ephemeris alternative", "jpl", "vedic", "houses", "ayanamsa"]
+classifiers = ["License :: OSI Approved :: Apache Software License", "Programming Language :: Python :: 3", "Topic :: Scientific/Engineering :: Astronomy"]
+authors = [{ name = "AlifAstrology.com", email = "info@alifastrology.com" }]
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
+
+[project.urls]
+Homepage = "https://alifastrology.com"
+Repository = "https://github.com/L0ad1ing/alif-ephemeris"
+Issues = "https://github.com/L0ad1ing/alif-ephemeris/issues"
+
+[project.optional-dependencies]
+dev = ["pytest", "skyfield", "jplephem", "pyerfa", "pyswisseph"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+alif_ephemeris = ["data/*.npz", "data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
