@@ -42,8 +42,13 @@ A free, open-source ephemeris for astrology and astronomy software, by [AlifAstr
 - Phase, illuminated fraction, elongation, apparent size and magnitude of the planets (Mallama and Hilton 2018).
 - A Swiss-style function interface, so existing software can run on it unchanged, and a self-hosted web API.
 - Thread-safe, no global state. Any number of threads can share one `Ephemeris`.
-- Speed: about 19,000 full apparent positions per second in a batch. A single call takes about 1.5 ms (3 ms with speed),
-  and a daily sweep of many positions costs 20 to 170 microseconds each (see `docs/SWISS_COMPATIBILITY.md`).
+- Speed: in the Swiss-style interface a planet position with speed takes about 6 microseconds once the fast windows
+  are built, the same as Swiss Ephemeris. Houses, azimuth and altitude, sidereal time, fixed stars and the ayanamsa are
+  within a few microseconds of it, and a rise or set takes about 150 microseconds. A batch of full apparent positions runs
+  at about 19,000 per second. `python tools/bench_speed.py` prints the comparison on your machine.
+- Dates from year -1000 to 3200: DE440 covers 1550 to 2650; two small range packs cut straight from DE441
+  (`tools/make_range_pack.py`, about 340 MB together) cover the rest with identical numbers. Without them the DE441 files
+  work as before.
 
 ## Quick start
 
