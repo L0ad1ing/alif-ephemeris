@@ -41,9 +41,47 @@ def nutation_iau2000a(jd_tt):
         if hit is None:
             if len(_NUT_CACHE) > 4096:
                 _NUT_CACHE.clear()
-            hit = _NUT_CACHE[key] = _nutation_uncached(jd_tt)
+            hit = _NUT_CACHE[key] = _nutation_windowed(key)
         return hit
+    arr = np.asarray(jd_tt, dtype=float)
+    if arr.size <= 16:                           # a few dates: the fitted windows are far quicker than the full series
+        flat = arr.reshape(-1)
+        res = [_nutation_windowed(float(x)) for x in flat]
+        return (np.array([r[0] for r in res]).reshape(arr.shape), np.array([r[1] for r in res]).reshape(arr.shape))
     return _nutation_uncached(jd_tt)
+
+
+_NUT_SPAN = 4.0            # days per fitted window; the quickest nutation term has a period of about 5.6 days
+_NUT_NODES = 24
+_NUT_WINDOWS: dict = {}
+_NUT_NODE_X = np.cos(np.pi * (np.arange(_NUT_NODES) + 0.5) / _NUT_NODES)
+
+
+def _nutation_windowed(jd_tt):
+    """Nutation for one date from a Chebyshev fit of the full series over a 4 day window (agrees to 1e-12 rad)."""
+    k = int(np.floor((jd_tt - J2000) / _NUT_SPAN))
+    win = _NUT_WINDOWS.get(k)
+    if win is None:
+        if len(_NUT_WINDOWS) > 2048:
+            _NUT_WINDOWS.clear()
+        centre = J2000 + (k + 0.5) * _NUT_SPAN
+        pts = centre + _NUT_NODE_X * (_NUT_SPAN / 2.0)
+        dpsi, deps = _nutation_uncached(pts)
+        n = _NUT_NODES
+        j = np.arange(n)
+        basis = np.cos(np.pi * np.outer(j, j + 0.5) / n)            # basis[m, i] = T_m(x_i)
+        cpsi = basis @ dpsi * (2.0 / n)
+        ceps = basis @ deps * (2.0 / n)
+        cpsi[0] /= 2.0
+        ceps[0] /= 2.0
+        win = _NUT_WINDOWS[k] = (centre, cpsi.tolist(), ceps.tolist())
+    centre, cpsi, ceps = win
+    x = (jd_tt - centre) / (_NUT_SPAN / 2.0)
+    b1p = b2p = b1e = b2e = 0.0
+    for m in range(_NUT_NODES - 1, 0, -1):                          # Clenshaw recurrence
+        b1p, b2p = 2.0 * x * b1p - b2p + cpsi[m], b1p
+        b1e, b2e = 2.0 * x * b1e - b2e + ceps[m], b1e
+    return x * b1p - b2p + cpsi[0], x * b1e - b2e + ceps[0]
 
 
 def _nutation_uncached(jd_tt):

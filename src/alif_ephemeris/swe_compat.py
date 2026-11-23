@@ -254,6 +254,18 @@ def _ee_deps(tt):
     Chebyshev windows that agree with the full series to 1e-5 arcsec; the full series is used when a window does not
     fit."""
     tt = float(tt)
+    last = _EE_LAST[0]                          # one tuple, replaced whole, so threads never see a mixed pair
+    if last is not None and last[0] == tt:
+        return last[1]
+    out = _ee_deps_uncached(tt)
+    _EE_LAST[0] = (tt, out)
+    return out
+
+
+_EE_LAST = [None]
+
+
+def _ee_deps_uncached(tt):
     for li, (span, n) in enumerate(_EE_LEVELS):
         k = math.floor((tt - 2451545.0) / span)
         key = (li, k)
@@ -693,11 +705,49 @@ def _build_window(body, base, span, n, k):
     return (c_whole, c_frac, h, coef) if err < 1e-3 else False
 
 
+def _fast_topo(body, tt_whole, tt_frac, flags, jd_ut):
+    """Topocentric longitude, latitude, distance from the fast geocentric windows: the observer's offset from the
+    Earth's centre (in the true ecliptic of date) is subtracted from the geocentric vector. Differs from the full
+    computation by well under 0.001 arcsec (checked in tests)."""
+    g_flags = flags & ~(_c.FLG_TOPOCTR | _c.FLG_EQUATORIAL)
+    lon, lat, dist = _fast_lld(body, tt_whole, tt_frac, g_flags, jd_ut)
+    fr = np.asarray(tt_frac, dtype=float)
+    tt = float(tt_whole) + fr
+    ut = jd_ut if jd_ut is not None else tt - np.asarray(timescales.delta_t(tt)) / 86400.0
+    r_eq, v_eq = positions.site_vector_true_equator(_S.topo[0], _S.topo[1], _S.topo[2], ut, tt)
+    eps = frames.true_obliquity(tt)
+    ce, se = np.cos(eps), np.sin(eps)
+    x, y, z = r_eq[..., 0], r_eq[..., 1], r_eq[..., 2]
+    sx, sy, sz = x, y * ce + z * se, -y * se + z * ce                       # observer in the true ecliptic of date (km)
+    lo, la = np.radians(lon), np.radians(lat)
+    d_km = np.asarray(dist) * positions.AU_KM
+    vx = d_km * np.cos(la) * np.cos(lo) - sx
+    vy = d_km * np.cos(la) * np.sin(lo) - sy
+    vz = d_km * np.sin(la) - sz
+    r = np.sqrt(vx * vx + vy * vy + vz * vz)
+    if not flags & (_c.FLG_TRUEPOS | _c.FLG_NOABERR):                           # the observer's own turning adds a diurnal aberration
+        wx, wy, wz = v_eq[..., 0], v_eq[..., 1] * ce + v_eq[..., 2] * se, -v_eq[..., 1] * se + v_eq[..., 2] * ce
+        ux, uy, uz = vx / r, vy / r, vz / r
+        k = 299792.458
+        dot = (ux * wx + uy * wy + uz * wz) / k
+        ux, uy, uz = ux + wx / k - dot * ux, uy + wy / k - dot * uy, uz + wz / k - dot * uz
+        n = np.sqrt(ux * ux + uy * uy + uz * uz)
+        vx, vy, vz = ux / n * r, uy / n * r, uz / n * r
+    if flags & _c.FLG_EQUATORIAL:
+        vy, vz = vy * ce - vz * se, vy * se + vz * ce
+    out_lon = np.degrees(np.arctan2(vy, vx)) % 360.0
+    out_lat = np.degrees(np.arcsin(np.clip(vz / r, -1.0, 1.0)))
+    return out_lon, out_lat, r / positions.AU_KM
+
+
 def _fast_lld(body, tt_whole, tt_frac, flags, jd_ut):
     """Same answer as _planet_lonlat_dist, much faster when many nearby times are asked for in turn. A Chebyshev fit
     of the body's own computed position is built once per window of days and reused; each fit is checked against
     extra points computed the full way and used only if it agrees to 0.001 arcsec (tests/test_extras.py)."""
     levels = _WINDOW_LEVELS.get(body)
+    if (levels is not None and body != _c.MOON and flags & _c.FLG_TOPOCTR and _S.topo is not None
+            and not flags & (_c.FLG_XYZ | _c.FLG_RADIANS | _c.FLG_NONUT | _c.FLG_J2000 | _c.FLG_HELCTR | _c.FLG_BARYCTR)):
+        return _fast_topo(body, tt_whole, tt_frac, flags, jd_ut)
     if levels is None or flags & (_c.FLG_TOPOCTR | _c.FLG_XYZ | _c.FLG_RADIANS):
         return _planet_lonlat_dist(body, tt_whole, tt_frac, flags, jd_ut)
     fr = np.asarray(tt_frac, dtype=float)
@@ -989,13 +1039,15 @@ def azalt(tjd_ut, calc_flag, geopos, atpress, attemp, xin):
         ra, dec, _ = cotrans((xin[0], xin[1], 1.0), eps)
     else:
         ra, dec = xin[0], xin[1]
-    ha = np.radians(lst - ra)
-    lat, d = np.radians(geopos[1]), np.radians(dec)
-    sin_alt = np.sin(lat) * np.sin(d) + np.cos(lat) * np.cos(d) * np.cos(ha)
-    alt = np.arcsin(np.clip(sin_alt, -1.0, 1.0))
-    az = np.arctan2(np.sin(ha), np.cos(ha) * np.sin(lat) - np.tan(d) * np.cos(lat))   # from the south, westward
-    az = float(np.degrees(az) % 360.0)
-    true_alt = float(np.degrees(alt))
+    ha = math.radians(lst - ra)
+    lat, d = math.radians(geopos[1]), math.radians(dec)
+    sin_lat, cos_lat, sin_d, cos_d = math.sin(lat), math.cos(lat), math.sin(d), math.cos(d)
+    cos_ha = math.cos(ha)
+    sin_alt = sin_lat * sin_d + cos_lat * cos_d * cos_ha
+    alt = math.asin(max(-1.0, min(1.0, sin_alt)))
+    az = math.atan2(math.sin(ha), cos_ha * sin_lat - math.tan(d) * cos_lat)   # from the south, westward
+    az = math.degrees(az) % 360.0
+    true_alt = math.degrees(alt)
     app = true_alt
     if atpress and atpress > 0:
         app = true_alt + _refraction(true_alt, atpress, attemp)

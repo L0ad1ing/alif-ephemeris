@@ -37,6 +37,12 @@ def ascendant_from(ramc_deg, eps_deg, lat_deg):
     within 180 degrees after the Midheaven. Inside the polar circles the plain formula can return the
     western point, so it is checked and flipped.
     """
+    if np.ndim(ramc_deg) == 0 and np.ndim(eps_deg) == 0 and np.ndim(lat_deg) == 0:      # one place and time: plain math
+        import math
+        th, e, p = math.radians(ramc_deg), math.radians(eps_deg), math.radians(lat_deg)
+        asc = math.degrees(math.atan2(math.cos(th), -(math.sin(th) * math.cos(e) + math.tan(p) * math.sin(e)))) % 360.0
+        mc = math.degrees(math.atan2(math.sin(th), math.cos(th) * math.cos(e))) % 360.0
+        return asc if (asc - mc) % 360.0 < 180.0 else (asc + 180.0) % 360.0
     th, e, p = ramc_deg * D2R, eps_deg * D2R, lat_deg * D2R
     asc = _norm360(np.arctan2(np.cos(th), -(np.sin(th) * np.cos(e) + np.tan(p) * np.sin(e))) * R2D)
     mc = midheaven_from(ramc_deg, eps_deg)
@@ -46,6 +52,10 @@ def ascendant_from(ramc_deg, eps_deg, lat_deg):
 
 def midheaven_from(ramc_deg, eps_deg):
     """Ecliptic longitude of the Midheaven (the ecliptic point on the meridian, south of the zenith)."""
+    if np.ndim(ramc_deg) == 0 and np.ndim(eps_deg) == 0:
+        import math
+        th, e = math.radians(ramc_deg), math.radians(eps_deg)
+        return math.degrees(math.atan2(math.sin(th), math.cos(th) * math.cos(e))) % 360.0
     th, e = ramc_deg * D2R, eps_deg * D2R
     return _norm360(np.arctan2(np.sin(th), np.cos(th) * np.cos(e)) * R2D)
 
@@ -180,21 +190,44 @@ def _placidus(ramc, eps, lat, arcs, asc, mc):
     e = math.radians(eps)
     sin_e, cos_e = math.sin(e), math.cos(e)
     tan_phi = math.tan(math.radians(lat))
+    atan2, sin, cos, asin, acos, tan = math.atan2, math.sin, math.cos, math.asin, math.acos, math.tan
+    rad, deg = math.radians, math.degrees
     out = {}
     for h, frac, from_noon in ((11, 1.0 / 3, True), (12, 2.0 / 3, True), (2, 2.0 / 3, False), (3, 1.0 / 3, False)):
         lon = {11: mc + 30.0, 12: mc + 60.0, 2: asc + 30.0, 3: asc + 60.0}[h]  # starting guess
-        for _ in range(60):
-            x = -tan_phi * math.tan(math.asin(sin_e * math.sin(math.radians(lon))))        # tan(dec) * -tan(lat)
-            if abs(x) >= 1.0:
+        base = ramc if from_noon else ramc + 180.0
+        sgn = 1.0 if from_noon else -1.0
+        scale = frac if from_noon else frac
+
+        def g(x):
+            t = -tan_phi * tan(asin(sin_e * sin(rad(x))))        # -tan(dec) tan(lat)
+            if abs(t) >= 1.0:
                 return None
-            dsa = math.degrees(math.acos(x))                                              # diurnal semi-arc
-            ra = ramc + frac * dsa if from_noon else ramc + 180.0 - frac * (180.0 - dsa)
-            a = math.radians(ra)
-            new = math.degrees(math.atan2(math.sin(a), math.cos(a) * cos_e)) % 360.0
-            done = abs((new - lon + 180.0) % 360.0 - 180.0) < 1e-8
-            lon = new
-            if done:
+            dsa = deg(acos(t))                                   # diurnal semi-arc
+            ra = base + frac * dsa if from_noon else base - frac * (180.0 - dsa)
+            a = rad(ra)
+            return deg(atan2(sin(a), cos(a) * cos_e)) % 360.0
+
+        def wrap(d):
+            return (d + 180.0) % 360.0 - 180.0
+
+        for _ in range(40):
+            x1 = g(lon)
+            if x1 is None:
+                return None
+            d1 = wrap(x1 - lon)
+            if abs(d1) < 1e-8:
+                lon = x1
                 break
+            x2 = g(x1)
+            if x2 is None:
+                return None
+            d2 = wrap(x2 - x1)
+            den = d2 - d1
+            if abs(den) > 1e-14:
+                lon = (lon - d1 * d1 / den) % 360.0           # Steffensen (Aitken) step
+            else:
+                lon = x2
         out[h] = float(lon)
     return out
 

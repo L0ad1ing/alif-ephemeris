@@ -8,6 +8,7 @@ under 0.9 seconds, which is up to 14 arcseconds of sidereal angle; if you need b
 """
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,6 +23,13 @@ J2000 = 2451545.0
 
 def earth_rotation_angle(jd_ut1):
     """Earth rotation angle (radians), IAU 2000. Uses the two-part form to keep full precision."""
+    if np.ndim(jd_ut1) == 0:                                  # one date: plain math is several times quicker
+        jd = float(jd_ut1)
+        whole = math.floor(jd - 0.5) + 0.5
+        frac = jd - whole
+        t = (whole - J2000) + frac
+        f = whole % 1.0 + frac % 1.0
+        return (TWO_PI * (f + 0.7790572732640 + 0.00273781191135448 * t)) % TWO_PI
     whole, frac = timescales.split_jd(jd_ut1)
     t = (whole - J2000) + frac
     f = np.mod(whole, 1.0) + np.mod(frac, 1.0)               # fraction of the day
@@ -30,6 +38,11 @@ def earth_rotation_angle(jd_ut1):
 
 def gmst(jd_ut1, jd_tt=None):
     """Greenwich mean sidereal time in radians (IAU 2006)."""
+    if np.ndim(jd_ut1) == 0 and jd_tt is not None and np.ndim(jd_tt) == 0:
+        t = (float(jd_tt) - J2000) / 36525.0
+        poly = (0.014506 + t * (4612.156534 + t * (1.3915817 + t * (-0.00000044
+                + t * (-0.000029956 + t * -0.0000000368))))) * ASEC2RAD
+        return (earth_rotation_angle(jd_ut1) + poly) % TWO_PI
     jd_ut1 = np.asarray(jd_ut1, dtype=float)
     if jd_tt is None:
         jd_tt = timescales.ut_to_tt(jd_ut1)
@@ -72,19 +85,56 @@ def _fundamental(t):
     return np.mod(np.stack(np.broadcast_arrays(*fa)), tau)
 
 
+def _complementary_terms(jd_tt):
+    """The complementary terms of the equation of the equinoxes, in arcseconds, for an array of dates (full series)."""
+    T = _tables()
+    t = (jd_tt - J2000) / 36525.0
+    fa = _fundamental(t)                                       # (14, ...)
+    arg0 = np.tensordot(T["ke0"].astype(float), fa, axes=(1, 0))      # (33, ...)
+    c = np.tensordot(T["se0_sin"], np.sin(arg0), axes=(0, 0)) + np.tensordot(T["se0_cos"], np.cos(arg0), axes=(0, 0))
+    arg1 = np.tensordot(T["ke1"].astype(float), fa, axes=(0, 0))
+    return c + t * (float(T["se1_sin"]) * np.sin(arg1) + float(T["se1_cos"]) * np.cos(arg1))
+
+
+_CT_SPAN, _CT_NODES = 4.0, 20
+_CT_WINDOWS: dict = {}
+_CT_X = np.cos(np.pi * (np.arange(_CT_NODES) + 0.5) / _CT_NODES)
+_CT_BASIS = np.cos(np.pi * np.outer(np.arange(_CT_NODES), np.arange(_CT_NODES) + 0.5) / _CT_NODES)
+
+
+def _complementary_fast(jd_tt):
+    """Same value from a Chebyshev fit over a 4 day window (the fastest term has a period of about 9 days)."""
+    k = int(np.floor((jd_tt - J2000) / _CT_SPAN))
+    win = _CT_WINDOWS.get(k)
+    if win is None:
+        if len(_CT_WINDOWS) > 2048:
+            _CT_WINDOWS.clear()
+        centre = J2000 + (k + 0.5) * _CT_SPAN
+        vals = _complementary_terms(centre + _CT_X * (_CT_SPAN / 2.0))
+        co = _CT_BASIS @ vals * (2.0 / _CT_NODES)
+        co[0] /= 2.0
+        win = _CT_WINDOWS[k] = (centre, co.tolist())
+    centre, co = win
+    x = (jd_tt - centre) / (_CT_SPAN / 2.0)
+    b1 = b2 = 0.0
+    for m in range(_CT_NODES - 1, 0, -1):
+        b1, b2 = 2.0 * x * b1 - b2 + co[m], b1
+    return x * b1 - b2 + co[0]
+
+
 def equation_of_equinoxes(jd_tt):
     """Equation of the equinoxes (radians): nutation in longitude times cos(obliquity) plus the
     complementary terms (IERS Conventions 2010, eq. 5.12 and table 5.2e)."""
     jd_tt = np.asarray(jd_tt, dtype=float)
-    T = _tables()
-    t = (jd_tt - J2000) / 36525.0
-    fa = _fundamental(t)                                       # (14, ...)
     dpsi, _ = frames.nutation_iau2000a(jd_tt)
     eps = frames.mean_obliquity(jd_tt)
-    arg0 = np.tensordot(T["ke0"].astype(float), fa, axes=(1, 0))      # (33, ...)
-    c = np.tensordot(T["se0_sin"], np.sin(arg0), axes=(0, 0)) + np.tensordot(T["se0_cos"], np.cos(arg0), axes=(0, 0))
-    arg1 = np.tensordot(T["ke1"].astype(float), fa, axes=(0, 0))
-    c = c + t * (float(T["se1_sin"]) * np.sin(arg1) + float(T["se1_cos"]) * np.cos(arg1))
+    if jd_tt.size <= 16:
+        flat = jd_tt.reshape(-1)
+        c = np.array([_complementary_fast(float(x)) for x in flat]).reshape(jd_tt.shape)
+        if jd_tt.ndim == 0:
+            c = float(c)
+    else:
+        c = _complementary_terms(jd_tt)
     return dpsi * np.cos(eps) + c * ASEC2RAD
 
 
