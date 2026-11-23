@@ -201,7 +201,7 @@ def _delta_t_scalar(j):
 
 def delta_t(jd_ut):
     """TT minus UT in seconds for a Julian Day (UT). Accepts a float or an array (fully vectorised)."""
-    if np.ndim(jd_ut) == 0:                      # one date: plain Python arithmetic, same formulas as the array path
+    if type(jd_ut) is float or type(jd_ut) is int or np.ndim(jd_ut) == 0:    # one date: plain Python arithmetic
         value = _delta_t_scalar(float(jd_ut))
         if value is not None:
             return value

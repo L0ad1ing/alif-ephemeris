@@ -86,7 +86,7 @@ def _find_data_files():
     folders = []
     if _S.ephe_file:
         folders.append(os.path.dirname(_S.ephe_file))
-    folders += [os.path.join(root, "data", "raw"), os.getcwd()]
+    folders += [os.path.join(root, "data", "raw"), os.path.join(root, "data", "packs"), os.getcwd()]
     main = None
     if _S.ephe_file and os.path.isfile(_S.ephe_file):
         main = _S.ephe_file
@@ -136,7 +136,7 @@ def set_ephe_path(path=None):
     """Remember a folder or file; a .bsp planetary file found there is used."""
     _DATA_FILES_CACHE.clear()
     _RESULT_CACHE.clear()
-    _WINDOWS.clear()
+    _drop_windows()
     if path and os.path.isfile(path):
         _S.ephe_file = path
     elif path and os.path.isdir(path):
@@ -151,7 +151,7 @@ def close():
     _eph.cache_clear()
     _DATA_FILES_CACHE.clear()
     _RESULT_CACHE.clear()
-    _WINDOWS.clear()
+    _drop_windows()
 
 
 def set_topo(lon, lat, alt=0.0):
@@ -174,13 +174,35 @@ def deltat(jd_ut):
 # calendar
 # ---------------------------------------------------------------------------------------------
 def julday(year, month, day, hour=0.0, gregflag=_c.GREG_CAL):
-    return timescales.julian_day(int(year), int(month), float(day), float(hour),
-                                 "gregorian" if gregflag == _c.GREG_CAL else "julian")
+    y, m = int(year), int(month)
+    if m <= 2:
+        y -= 1
+        m += 12
+    b = 0
+    if gregflag == _c.GREG_CAL:
+        a = y // 100
+        b = 2 - a + a // 4
+    return float(math.floor(365.25 * (y + 4716)) + math.floor(30.6001 * (m + 1)) + float(day) + b - 1524.5) + float(hour) / 24.0
 
 
 def revjul(jd, gregflag=_c.GREG_CAL):
-    y, m, d, h = timescales.calendar_date(float(jd), "gregorian" if gregflag == _c.GREG_CAL else "julian")
-    return y, m, d, h
+    jd = float(jd) + 0.5
+    z = math.floor(jd)
+    f = jd - z
+    if gregflag == _c.GREG_CAL:
+        alpha = math.floor((z - 1867216.25) / 36524.25)
+        a = z + 1 + alpha - alpha // 4
+    else:
+        a = z
+    b = a + 1524
+    c = math.floor((b - 122.1) / 365.25)
+    d = math.floor(365.25 * c)
+    e = math.floor((b - d) / 30.6001)
+    day = b - d - math.floor(30.6001 * e) + f
+    month = e - 1 if e < 14 else e - 13
+    year = c - 4716 if month > 2 else c - 4715
+    whole = math.floor(day)
+    return int(year), int(month), int(whole), (day - whole) * 24.0
 
 
 def day_of_week(jd):
@@ -484,7 +506,7 @@ def set_reference_convention(on=True):
         _PLANET_ID.update({_c.JUPITER: planets.JUPITER, _c.SATURN: planets.SATURN, _c.URANUS: planets.URANUS,
                            _c.NEPTUNE: planets.NEPTUNE, _c.PLUTO: planets.PLUTO})
     _RESULT_CACHE.clear()
-    _WINDOWS.clear()
+    _drop_windows()
 
 
 _SMALL_BODY = {_c.CHIRON: _sb.CHIRON, _c.PHOLUS: _sb.PHOLUS, _c.CERES: _sb.CERES, _c.PALLAS: _sb.PALLAS,
@@ -494,6 +516,15 @@ _NAMES = {0: "Sun", 1: "Moon", 2: "Mercury", 3: "Venus", 4: "Mars", 5: "Jupiter"
           8: "Neptune", 9: "Pluto", 10: "mean Node", 11: "true Node", 12: "mean Apogee", 13: "osc. Apogee",
           14: "Earth", 15: "Chiron", 16: "Pholus", 17: "Ceres", 18: "Pallas", 19: "Juno", 20: "Vesta",
           21: "intp. Apogee", 22: "intp. Perigee"}
+
+
+def _drop_windows():
+    """Forget every fitted window: they depend on the data files, the outer-planet convention and the sidereal mode."""
+    _WINDOWS.clear()
+    _SUBWIN.clear()
+    _STARSUB.clear()
+    _AYWIN.clear()
+    _STAR_WINDOWS.clear()
 
 
 def get_planet_name(ipl):
@@ -768,6 +799,14 @@ def _scalar_ayanamsa(jd_tt, flags, want_rate=False):
         def fn(whole, fracs):
             return np.array([[_mean_ayanamsa(whole + float(f)) for f in fracs]])
         win = _AYWIN[key] = _poly_window_plain(fn, 32.0, 7, k)
+    if win is False:                                          # not smooth enough here: the exact value, slower
+        a = _mean_ayanamsa(jd_tt)
+        r = (_mean_ayanamsa(jd_tt + 0.005) - _mean_ayanamsa(jd_tt - 0.005)) / 0.01 if want_rate else 0.0
+        if not nonut:
+            a += math.degrees(frames._nutation_windowed(jd_tt)[0])
+            if want_rate:
+                r += math.degrees(frames._nutation_windowed(jd_tt + 0.005)[0] - frames._nutation_windowed(jd_tt - 0.005)[0]) / 0.01
+        return a, r
     c_whole, c_frac, h, c, dc = win
     u = ((jd_tt - c_whole) - c_frac) / h
     a = r = 0.0
@@ -784,6 +823,11 @@ def _scalar_ayanamsa(jd_tt, flags, want_rate=False):
             def nfn(whole, fracs):
                 return np.array([[frames._nutation_windowed(whole + float(f))[0] * 57.29577951308232 for f in fracs]])
             nw = _AYWIN[("nut", nk)] = _poly_window_plain(nfn, 2.0, 8, nk)
+        if nw is False:
+            a += math.degrees(frames._nutation_windowed(jd_tt)[0])
+            if want_rate:
+                r += math.degrees(frames._nutation_windowed(jd_tt + 0.005)[0] - frames._nutation_windowed(jd_tt - 0.005)[0]) / 0.01
+            return a, r
         c_whole, c_frac, h, c, dc = nw
         u = ((jd_tt - c_whole) - c_frac) / h
         n = 0.0
@@ -799,15 +843,20 @@ def _scalar_ayanamsa(jd_tt, flags, want_rate=False):
 
 
 def _poly_window_plain(fn, span, degree, k):
+    """One-column polynomial window; False when it does not reproduce the function to 0.0003 arcsec at extra points."""
     h = span / 2.0 + _SUB_MARGIN
     centre = 2451545.0 + (k + 0.5) * span
     c_whole = math.floor(centre)
     c_frac = centre - c_whole
     m = degree + 4
     un = np.cos(np.pi * (np.arange(m) + 0.5) / m)
-    y = np.asarray(fn(float(c_whole), c_frac + un * h), dtype=float).reshape(-1)
+    both = np.concatenate([un, _SUB_CHECK])
+    y = np.asarray(fn(float(c_whole), c_frac + both * h), dtype=float).reshape(-1)
     cheb = np.polynomial.chebyshev
-    pw = cheb.cheb2poly(cheb.chebfit(un, y, degree))
+    c = cheb.chebfit(un, y[:m], degree)
+    if float(np.abs(cheb.chebval(_SUB_CHECK, c) - y[m:]).max()) * 3600.0 > 3e-4:
+        return False
+    pw = cheb.cheb2poly(c)
     return (c_whole, c_frac, h, pw.tolist(), (pw[1:] * np.arange(1, len(pw))).tolist())
 
 
@@ -905,7 +954,7 @@ def _simple_position(jd_tt, body, flags):
         win = _WINDOWS.get(key)
         if win is None:
             if len(_WINDOWS) >= _WINDOW_MAX:
-                _WINDOWS.clear()
+                _drop_windows()
             win = _WINDOWS[key] = _build_window(body, flags, span, n, k)
         if win is False:
             continue
@@ -1009,7 +1058,7 @@ def _fast_lld(body, tt_whole, tt_frac, flags, jd_ut):
         win = _WINDOWS.get(key)
         if win is None:
             if len(_WINDOWS) >= _WINDOW_MAX:
-                _WINDOWS.clear()
+                _drop_windows()
             win = _WINDOWS[key] = _build_window(body, base, span, n, k)
         if win is False:
             continue
@@ -1514,6 +1563,7 @@ def sol_eclipse_when_loc(jd_start, geopos, ifl=_c.FLG_SWIEPH, backward=False):
 # rise, set, transit
 # ---------------------------------------------------------------------------------------------
 _FAST_RISE = True
+_REV_CENTRES: dict = {}
 
 
 def _fast_lst(ut, tt, east_lon_deg):
@@ -1523,11 +1573,10 @@ def _fast_lst(ut, tt, east_lon_deg):
 def _fast_rise_equatorial(body, tt, site, ut):
     """(RA, Dec in radians, distance in AU) of a planet seen from `site`, for the rise and set search. Plain arithmetic on
     the fast windows; the Moon is within 0.3 arcsec of the full computation, the others within 0.001 arcsec."""
-    swe_body = None
-    for k, v in _PLANET_ID_CENTRES.items():
-        if v == body:
-            swe_body = k
-            break
+    rev = _REV_CENTRES.get(_CONVENTION["outer_barycentres"])
+    if rev is None:
+        rev = _REV_CENTRES[_CONVENTION["outer_barycentres"]] = {v: k for k, v in _PLANET_ID_CENTRES.items()}
+    swe_body = rev.get(body)
     if swe_body is None or swe_body not in _SUBSPAN:
         return None
     r = _scalar_topo(float(tt), swe_body, _c.FLG_SWIEPH | _c.FLG_EQUATORIAL | _c.FLG_TOPOCTR, float(ut), tuple(site))

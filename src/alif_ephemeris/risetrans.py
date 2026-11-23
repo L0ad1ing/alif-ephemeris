@@ -155,13 +155,11 @@ def _predicted_bracket(spk, body, ut_start, site, delta_t_days, kind, g, geocent
             break
         t0, g0, t1 = t1, g1, t2
         g1 = g(t1)
-        if abs(t1 - t0) < 2e-9:
-            slope_ok = (g1 - g0) * (t1 - t0) >= 0.0
+        if abs(t1 - t0) < 1e-8:
+            slope = (g1 - g0) / (t1 - t0) if t1 != t0 else 0.0           # degrees of altitude (or hour angle) per day
             rising = kind != "set"
-            up = (g(t1 + 1.0 / 1440.0) - g(t1 - 1.0 / 1440.0)) > 0.0
-            if t1 > ut_start and abs(g1) < 1e-6 and up == rising and t1 - ut_start < 1.25 and slope_ok:
-                if not (kind in ("upper transit", "lower transit") and False):
-                    return float(t1)
+            if t1 > ut_start and abs(g1) < 1e-6 and (slope > 1.0 if rising else slope < -1.0) and t1 - ut_start < 1.2:
+                return float(t1)                                          # a tangential touch (slope near 0) is not an event
             break
     for half in (40.0 / 1440.0, 120.0 / 1440.0):          # try an 80 minute bracket, then a 4 hour one
         lo, hi = guess - half, guess + half
@@ -178,7 +176,11 @@ def _predicted_bracket(spk, body, ut_start, site, delta_t_days, kind, g, geocent
             ok = False
         if ok:
             t = float(brentq(g, lo, hi, xtol=1e-9))
-            if t - ut_start > 1.25:
+            probe = 1.0 / 1440.0
+            slope = (g(t + probe) - g(t - probe)) / (2.0 * probe)
+            if abs(slope) < 1.0:                              # a tangential touch (the Sun just grazing the horizon): no event
+                return None
+            if t - ut_start > 1.2:
                 return None                              # let the scan confirm anything this far out
             return t
     return None
