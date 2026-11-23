@@ -265,47 +265,57 @@ def _ee_deps(tt):
 _EE_LAST = [None]
 
 
+_EEP: dict = {}
+
+
 def _ee_deps_uncached(tt):
-    for li, (span, n) in enumerate(_EE_LEVELS):
-        k = math.floor((tt - 2451545.0) / span)
-        key = (li, k)
-        win = _EE_WINDOWS.get(key)
-        if win is None:
-            if len(_EE_WINDOWS) > 20000:
-                _EE_WINDOWS.clear()
-            h = span / 2.0 + 0.01
-            centre = 2451545.0 + (k + 0.5) * span
-            xn = np.cos(np.pi * (np.arange(n) + 0.5) / n)
-            xs = np.concatenate([xn, _CHECK])
-            times = centre + xs * h
-            ee = np.asarray(sidereal_time.equation_of_equinoxes(times), dtype=float)
-            deps = np.asarray(frames.nutation_iau2000a(times)[1], dtype=float)
-            coef = np.polynomial.chebyshev.chebfit(xn, np.stack([ee[:n], deps[:n]], axis=1), n - 1)
-            fit = np.polynomial.chebyshev.chebval(_CHECK, coef)
-            err = max(np.abs(fit[0] - ee[n:]).max(), np.abs(fit[1] - deps[n:]).max()) / 4.848136811e-6
-            win = (centre, h, coef) if err < 1e-5 else False
-            _EE_WINDOWS[key] = win
-        if win is False:
-            continue
-        centre, h, coef = win
-        x = (tt - centre) / h
-        if -1.0 <= x <= 1.0:
-            ks = _KS.get(coef.shape[0])
-            if ks is None:
-                ks = _KS[coef.shape[0]] = np.arange(coef.shape[0])
-            out = np.cos(ks * math.acos(x)) @ coef
-            return float(out[0]), float(out[1])
-    dpsi_eps = frames.nutation_iau2000a(tt)
-    return float(sidereal_time.equation_of_equinoxes(tt)), float(dpsi_eps[1])
+    """(equation of the equinoxes, nutation in obliquity) in radians from a 4 day polynomial window (degree 11,
+    agrees with the full series to about 1e-5 arcsec)."""
+    k = math.floor((tt - 2451545.0) / 4.0)
+    win = _EEP.get(k)
+    if win is None:
+        if len(_EEP) > 20000:
+            _EEP.clear()
+        h = 2.0 + _SUB_MARGIN
+        centre = 2451545.0 + (k + 0.5) * 4.0
+        c_whole = math.floor(centre)
+        c_frac = centre - c_whole
+        m = 16
+        un = np.cos(np.pi * (np.arange(m) + 0.5) / m)
+        times = c_whole + c_frac + un * h
+        ee = np.asarray(sidereal_time.equation_of_equinoxes(times), dtype=float)
+        deps = np.asarray(frames.nutation_iau2000a(times)[1], dtype=float)
+        cheb = np.polynomial.chebyshev
+        pe = cheb.cheb2poly(cheb.chebfit(un, ee, 11)).tolist()
+        pd = cheb.cheb2poly(cheb.chebfit(un, deps, 11)).tolist()
+        win = _EEP[k] = (c_whole, c_frac, h, pe[::-1], pd[::-1])
+    c_whole, c_frac, h, pe, pd = win
+    u = ((tt - c_whole) - c_frac) / h
+    a = b = 0.0
+    for x in pe:
+        a = a * u + x
+    for x in pd:
+        b = b * u + x
+    return a, b
 
 
 def _gast_rad(jd_ut, tt):
     """Greenwich apparent sidereal time (radians) using the windowed equation of the equinoxes."""
-    return (float(sidereal_time.gmst(jd_ut, tt)) + _ee_deps(tt)[0]) % (2.0 * math.pi)
+    jd = float(jd_ut)                                           # Greenwich sidereal time with plain arithmetic
+    tt = float(tt)
+    whole = math.floor(jd - 0.5) + 0.5
+    frac = jd - whole
+    f = whole % 1.0 + frac % 1.0
+    era = 6.283185307179586 * (f + 0.7790572732640 + 0.00273781191135448 * ((whole - 2451545.0) + frac))
+    t = (tt - 2451545.0) / 36525.0
+    poly = (0.014506 + t * (4612.156534 + t * (1.3915817 + t * (-0.00000044 + t * (-0.000029956 + t * -0.0000000368)))))         * 4.84813681109536e-06
+    return (era + poly + _ee_deps(tt)[0]) % 6.283185307179586
 
 
 def _true_obliquity_rad(tt):
-    return float(frames.mean_obliquity(tt)) + _ee_deps(tt)[1]
+    t = (float(tt) - 2451545.0) / 36525.0
+    mean = (84381.406 + t * (-46.836769 + t * (-0.0001831 + t * (0.00200340 + t * (-0.000000576 + t * (-0.0000000434))))))         * 4.84813681109536e-06
+    return mean + _ee_deps(tt)[1]
 
 
 def _st_offset_deg(jd_ut):
@@ -425,6 +435,8 @@ def _star_ayanamsa_with_aberration(spec, tt):
 
 
 def get_ayanamsa_ex(jd_et, flags=0):
+    if np.ndim(jd_et) == 0:
+        return flags, _scalar_ayanamsa(float(jd_et), flags)[0] % 360.0
     ay = _mean_ayanamsa(jd_et)
     if not (flags & _c.FLG_NONUT):
         ay += float(np.degrees(frames.nutation_iau2000a(jd_et)[0]))
@@ -630,9 +642,238 @@ _RESULT_CACHE_MAX = 50000
 _SIMPLE_EXCLUDE = _c.FLG_SPEED | _c.FLG_SPEED3 | _c.FLG_SIDEREAL | _c.FLG_XYZ | _c.FLG_RADIANS | _c.FLG_TOPOCTR
 
 
+# ---------------------------------------------------------------------------------------------
+# scalar fast path: short polynomial windows evaluated with plain Python arithmetic
+# ---------------------------------------------------------------------------------------------
+# (days per window, polynomial degree). Each window is fitted to the validated long windows above and checked
+# against them at extra points; where it does not reach 0.0003 arcsec the older path is used.
+_SUBSPAN = {_c.SUN: (8.0, 11), _c.MOON: (0.5, 11), _c.MERCURY: (4.0, 11), _c.VENUS: (8.0, 11), _c.MARS: (8.0, 11),
+            _c.JUPITER: (16.0, 11), _c.SATURN: (16.0, 11), _c.URANUS: (16.0, 11), _c.NEPTUNE: (16.0, 11),
+            _c.PLUTO: (16.0, 11), _c.MEAN_NODE: (8.0, 9), _c.MEAN_APOG: (8.0, 11), _c.TRUE_NODE: (2.0, 11)}
+_SUBWIN: dict = {}
+_SUBWIN_MAX = 30000
+_SCALAR_EXCLUDE = _c.FLG_XYZ | _c.FLG_RADIANS | _c.FLG_TOPOCTR
+_SUB_MARGIN = 0.002
+_SUB_CHECK = np.array([-0.97, -0.62, -0.2, 0.15, 0.58, 0.9, 1.0])
+
+
+def _poly_window(fn, span, degree, k, ncols, fallback_fn=None):
+    """Fit fn(whole, frac_array) -> (ncols, m) over window k of `span` days with a polynomial in u = (t - centre) / h.
+    Returns (c_whole, c_frac, h, [power coefficients per column], [derivative coefficients per column]) or False."""
+    h = span / 2.0 + _SUB_MARGIN
+    centre = 2451545.0 + (k + 0.5) * span
+    c_whole = math.floor(centre)
+    c_frac = centre - c_whole
+    m = degree + 4
+    un = np.cos(np.pi * (np.arange(m) + 0.5) / m)
+    both = np.concatenate([un, _SUB_CHECK])
+    vals = np.asarray(fn(float(c_whole), c_frac + both * h), dtype=float).reshape(ncols, -1)
+    cheb = np.polynomial.chebyshev
+    coefs, ders, worst = [], [], 0.0
+    for i in range(ncols):
+        y = vals[i]
+        if i == 0:
+            y = np.degrees(np.unwrap(np.radians(y)))
+        c = cheb.chebfit(un, y[:m], degree)
+        fit = cheb.chebval(_SUB_CHECK, c)
+        worst = max(worst, float(np.abs(fit - y[m:]).max()) * (3600.0 if i < 2 else 0.0))
+        pw = cheb.cheb2poly(c)
+        coefs.append(pw.tolist())
+        ders.append((pw[1:] * np.arange(1, len(pw))).tolist())
+    if worst > 3e-4:
+        if fallback_fn is not None:                 # the long windows are not smooth enough here: use the full calculation
+            return _poly_window(fallback_fn, span, degree, k, ncols)
+        return False
+    return (c_whole, c_frac, h, coefs, ders)
+
+
+def _lld_fn(body, base, exact=False):
+    def fn(whole, fracs):
+        lon, lat, dist = (_planet_lonlat_dist(body, whole, fracs, base, whole + fracs) if exact
+                          else _fast_lld(body, whole, fracs, base, None))
+        return np.stack([np.asarray(lon, dtype=float), np.asarray(lat, dtype=float), np.asarray(dist, dtype=float)])
+    return fn
+
+
+def _scalar_calc(jd_tt, body, flags):
+    """(lon, lat, dist, dlon, dlat, ddist) for one time from a short polynomial window, or None to use the long path."""
+    spec = _SUBSPAN.get(body)
+    if spec is None:
+        return None
+    span0, degree = spec
+    base = flags & ~(_c.FLG_SPEED | _c.FLG_SPEED3 | _c.FLG_SIDEREAL)
+    files = _data_files()
+    win = False
+    for li in (0, 1, 2):                                   # the usual window, then halves where it does not fit
+        span = span0 / (1 << li)
+        k = math.floor((jd_tt - 2451545.0) / span)
+        key = (body, base, files, li, k)
+        win = _SUBWIN.get(key)
+        if win is None:
+            if len(_SUBWIN) >= _SUBWIN_MAX:
+                _SUBWIN.clear()
+            win = _SUBWIN[key] = _poly_window(_lld_fn(body, base), span, degree, k, 3, _lld_fn(body, base, True))
+        if win is not False:
+            break
+    if win is False:
+        return None
+    c_whole, c_frac, h, coefs, ders = win
+    u = ((jd_tt - c_whole) - c_frac) / h
+    if u > 1.0 or u < -1.0:
+        return None
+    v = []
+    for c in coefs:
+        a = 0.0
+        for x in reversed(c):
+            a = a * u + x
+        v.append(a)
+    lon = v[0]
+    d = (0.0, 0.0, 0.0)
+    if flags & (_c.FLG_SPEED | _c.FLG_SPEED3):
+        d = []
+        for c in ders:
+            a = 0.0
+            for x in reversed(c):
+                a = a * u + x
+            d.append(a / h)
+    if flags & _c.FLG_SIDEREAL:
+        want = bool(flags & (_c.FLG_SPEED | _c.FLG_SPEED3))
+        ay, ay_rate = _scalar_ayanamsa(jd_tt, flags, want)
+        lon -= ay
+        if want:
+            d[0] -= ay_rate
+    return (lon % 360.0, v[1], v[2], d[0], d[1], d[2])
+
+
+_AYWIN: dict = {}
+
+
+def _scalar_ayanamsa(jd_tt, flags, want_rate=False):
+    """(ayanamsa in degrees, its rate per day). The mean part comes from a 32 day polynomial window (degree 7); the
+    nutation part, when wanted, from the short nutation windows."""
+    nonut = bool(flags & _c.FLG_NONUT)
+    mode = (_S.sid_mode, _S.sid_t0, _S.sid_ayan_t0, bool(_CONVENTION["outer_barycentres"]))
+    k = math.floor((jd_tt - 2451545.0) / 32.0)
+    key = (mode, k)
+    win = _AYWIN.get(key)
+    if win is None:
+        if len(_AYWIN) > 20000:
+            _AYWIN.clear()
+
+        def fn(whole, fracs):
+            return np.array([[_mean_ayanamsa(whole + float(f)) for f in fracs]])
+        win = _AYWIN[key] = _poly_window_plain(fn, 32.0, 7, k)
+    c_whole, c_frac, h, c, dc = win
+    u = ((jd_tt - c_whole) - c_frac) / h
+    a = r = 0.0
+    for x in reversed(c):
+        a = a * u + x
+    if want_rate:
+        for x in reversed(dc):
+            r = r * u + x
+        r /= h
+    if not nonut:
+        nk = math.floor((jd_tt - 2451545.0) / 2.0)
+        nw = _AYWIN.get(("nut", nk))
+        if nw is None:
+            def nfn(whole, fracs):
+                return np.array([[frames._nutation_windowed(whole + float(f))[0] * 57.29577951308232 for f in fracs]])
+            nw = _AYWIN[("nut", nk)] = _poly_window_plain(nfn, 2.0, 8, nk)
+        c_whole, c_frac, h, c, dc = nw
+        u = ((jd_tt - c_whole) - c_frac) / h
+        n = 0.0
+        for x in reversed(c):
+            n = n * u + x
+        a += n
+        if want_rate:
+            m = 0.0
+            for x in reversed(dc):
+                m = m * u + x
+            r += m / h
+    return a, r
+
+
+def _poly_window_plain(fn, span, degree, k):
+    h = span / 2.0 + _SUB_MARGIN
+    centre = 2451545.0 + (k + 0.5) * span
+    c_whole = math.floor(centre)
+    c_frac = centre - c_whole
+    m = degree + 4
+    un = np.cos(np.pi * (np.arange(m) + 0.5) / m)
+    y = np.asarray(fn(float(c_whole), c_frac + un * h), dtype=float).reshape(-1)
+    cheb = np.polynomial.chebyshev
+    pw = cheb.cheb2poly(cheb.chebfit(un, y, degree))
+    return (c_whole, c_frac, h, pw.tolist(), (pw[1:] * np.arange(1, len(pw))).tolist())
+
+
+_SITE_CACHE: dict = {}
+
+
+def _scalar_topo(jd_tt, body, flags, jd_ut):
+    """Topocentric (lon, lat, dist) for one time with plain arithmetic: the fast geocentric position minus the
+    observer's offset, plus the diurnal aberration. Matches the full computation to about 0.001 arcsec; the Moon
+    (large parallax, second order terms) and speed requests use the full path instead."""
+    topo = _S.topo
+    if topo is None:
+        return None
+    geo = _scalar_calc(jd_tt, body, flags & ~(_c.FLG_TOPOCTR | _c.FLG_EQUATORIAL))
+    if geo is None:
+        return None
+    site = _SITE_CACHE.get(topo)
+    if site is None:
+        lat = math.radians(topo[1])
+        e2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
+        n = 6378.137 / math.sqrt(1.0 - e2 * math.sin(lat) ** 2)
+        hh = topo[2] / 1000.0
+        site = (( n + hh) * math.cos(lat), (n * (1.0 - e2) + hh) * math.sin(lat), math.radians(topo[0]))
+        if len(_SITE_CACHE) > 64:
+            _SITE_CACHE.clear()
+        _SITE_CACHE[topo] = site
+    xy, zz, lon_e = site
+    if jd_ut is None:
+        jd_ut = jd_tt - deltat(jd_tt)
+    theta = (_gast_rad(jd_ut, jd_tt) + lon_e) % 6.283185307179586
+    eps = _true_obliquity_rad(jd_tt)
+    ce, se = math.cos(eps), math.sin(eps)
+    ct, st = math.cos(theta), math.sin(theta)
+    x, y, z = xy * ct, xy * st, zz
+    sx, sy, sz = x, y * ce + z * se, -y * se + z * ce            # observer, true ecliptic of date (km)
+    lo, la = math.radians(geo[0]), math.radians(geo[1])
+    d_km = geo[2] * 149597870.7
+    cl = math.cos(la)
+    vx = d_km * cl * math.cos(lo) - sx
+    vy = d_km * cl * math.sin(lo) - sy
+    vz = d_km * math.sin(la) - sz
+    r = math.sqrt(vx * vx + vy * vy + vz * vz)
+    if not flags & (_c.FLG_TRUEPOS | _c.FLG_NOABERR):
+        w = 7.2921150e-5 * xy                                    # the observer's own velocity (km/s), turning with the Earth
+        wx0, wy0 = -w * st, w * ct
+        wx, wy, wz = wx0, wy0 * ce, -wy0 * se
+        k = 299792.458
+        ux, uy, uz = vx / r, vy / r, vz / r
+        dot = (ux * wx + uy * wy + uz * wz) / k
+        ux, uy, uz = ux + wx / k - dot * ux, uy + wy / k - dot * uy, uz + wz / k - dot * uz
+        nn = math.sqrt(ux * ux + uy * uy + uz * uz)
+        vx, vy, vz = ux / nn * r, uy / nn * r, uz / nn * r
+    if flags & _c.FLG_EQUATORIAL:
+        vy, vz = vy * ce - vz * se, vy * se + vz * ce
+    return (math.degrees(math.atan2(vy, vx)) % 360.0, math.degrees(math.asin(max(-1.0, min(1.0, vz / r)))),
+            r / 149597870.7)
+
+
 def _calc_tt(jd_tt, body, flags, jd_ut=None):
     """Cached front door of the position calculation. A position depends on the time, body, flags and the settings
     held in `_S`, so all of them form the key; software that asks for the same place twice gets it back at once."""
+    if (flags & _c.FLG_TOPOCTR and body != _c.MOON and body in _SUBSPAN
+            and not flags & (_c.FLG_XYZ | _c.FLG_RADIANS | _c.FLG_NONUT | _c.FLG_J2000 | _c.FLG_HELCTR | _c.FLG_BARYCTR
+                             | _c.FLG_SPEED | _c.FLG_SPEED3 | _c.FLG_SIDEREAL)):
+        r = _scalar_topo(float(jd_tt), body, int(flags), jd_ut)
+        if r is not None:
+            return (r[0], r[1], r[2], 0.0, 0.0, 0.0), flags
+    if not flags & _SCALAR_EXCLUDE and body in _SUBSPAN:
+        r = _scalar_calc(float(jd_tt), body, int(flags))
+        if r is not None:
+            return r, flags
     key = (float(jd_tt), int(body), int(flags), None if jd_ut is None else float(jd_ut), _S.topo, _S.delta_t_user,
            _S.sid_mode, _S.sid_t0, _S.sid_ayan_t0)
     hit = _RESULT_CACHE.get(key)
@@ -880,26 +1121,91 @@ def _gauquelin_houses(jd_ut, lat, lon, tt, flags):
     return tuple(cusps), tuple(ascmc)
 
 
+def _houses_placidus_fast(ramc, eps, lat):
+    """Placidus cusps and angles for one place and time with plain arithmetic: (cusps[12], asc, mc, vertex, equasc)
+    in degrees, or None when the method fails (inside the polar circles) so the general code takes over."""
+    pi, tau = math.pi, 2.0 * math.pi
+    sin, cos, tan, atan2, acos, sqrt = math.sin, math.cos, math.tan, math.atan2, math.acos, math.sqrt
+    th, e, ph = math.radians(ramc), math.radians(eps), math.radians(lat)
+    ste, cte, sth, cth = sin(e), cos(e), sin(th), cos(th)
+    tan_phi = tan(ph)
+    mc = atan2(sth, cth * cte) % tau
+    asc = atan2(cth, -(sth * cte + tan_phi * ste)) % tau
+    if (asc - mc) % tau >= pi:
+        asc = (asc + pi) % tau
+    # vertex: the ascendant seen from co-latitude with the meridian turned half way round
+    th2 = th + pi
+    cot_phi = 1.0 / tan_phi if tan_phi != 0.0 else 1e16
+    vtx = atan2(cos(th2), -(sin(th2) * cte + cot_phi * ste)) % tau
+    mc2 = atan2(sin(th2), cos(th2) * cte) % tau
+    if (vtx - mc2) % tau >= pi:
+        vtx = (vtx + pi) % tau
+    equasc = atan2(cth, -sth * cte) % tau
+    mc_equasc = mc
+    if (equasc - mc_equasc) % tau >= pi:
+        equasc = (equasc + pi) % tau
+    dm = (asc - mc) % tau
+    da = pi - dm
+    third = 1.0 / 3.0
+    cus = {}
+    for h, frac, from_noon, x in ((11, third, True, mc + dm * third), (12, 2.0 * third, True, mc + 2.0 * dm * third),
+                                  (2, 2.0 * third, False, asc + da * third), (3, third, False, asc + 2.0 * da * third)):
+        base = th if from_noon else th + pi
+        off = 0.0 if from_noon else pi                  # from the nadir side the arc is measured back from 180 degrees
+        for _ in range(40):
+            sd = ste * sin(x)
+            t = -tan_phi * sd / sqrt(1.0 - sd * sd)
+            if t >= 1.0 or t <= -1.0:
+                return None
+            ra = base + frac * (acos(t) - off)
+            x1 = atan2(sin(ra), cos(ra) * cte) % tau
+            d1 = (x1 - x + pi) % tau - pi
+            if -1e-9 < d1 < 1e-9:
+                x = x1
+                break
+            sd = ste * sin(x1)
+            t = -tan_phi * sd / sqrt(1.0 - sd * sd)
+            if t >= 1.0 or t <= -1.0:
+                return None
+            ra = base + frac * (acos(t) - off)
+            x2 = atan2(sin(ra), cos(ra) * cte) % tau
+            d2 = (x2 - x1 + pi) % tau - pi
+            den = d2 - d1
+            x = (x - d1 * d1 / den) % tau if abs(den) > 1e-15 else x2
+        cus[h] = x
+    deg = math.degrees
+    c = [0.0] * 12
+    c[0], c[9], c[3], c[6] = deg(asc), deg(mc), deg((mc + pi) % tau), deg((asc + pi) % tau)
+    for h, o in ((11, 5), (12, 6), (2, 8), (3, 9)):
+        c[h - 1] = deg(cus[h])
+        c[o - 1] = deg((cus[h] + pi) % tau)
+    return c, c[0], c[9], deg(vtx), deg(equasc)
+
+
 def houses_ex(jd_ut, lat, lon, hsys=b"P", flags=0):
     """House cusps and angles. Returns (cusps, ascmc): 12 cusp longitudes and 8 angle values (degrees)."""
     name = _hsys_name(hsys)
     tt = _tt_from_ut(jd_ut)
     if name == "Gauquelin":
         return _gauquelin_houses(jd_ut, lat, lon, tt, flags)
-    _refuse_beyond_polar_circle(name, float(lat), math.degrees(_true_obliquity_rad(tt)))
-    ramc = (math.degrees(_gast_rad(jd_ut, tt)) + float(lon)) % 360.0 + _st_offset_deg(jd_ut)
     eps = math.degrees(_true_obliquity_rad(tt))
+    _refuse_beyond_polar_circle(name, float(lat), eps)
+    ramc = (math.degrees(_gast_rad(jd_ut, tt)) + float(lon)) % 360.0 + _st_offset_deg(jd_ut)
     if flags & _c.FLG_NONUT:
         gm = float(np.degrees(sidereal_time.gmst(jd_ut, tt))) + _st_offset_deg(jd_ut)
         ramc = (gm + lon) % 360.0
         eps = float(np.degrees(frames.mean_obliquity(tt)))
-    h = _houses.compute(ramc, eps, lat, name)
-    cusps = list(h.cusps)
-    asc, mc, vtx = h.ascendant, h.midheaven, h.vertex
-    equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
+    fast = _houses_placidus_fast(ramc, eps, float(lat)) if name == "Placidus" else None
+    if fast is not None:
+        cusps, asc, mc, vtx, equasc = fast
+    else:
+        h = _houses.compute(ramc, eps, lat, name)
+        cusps = list(h.cusps)
+        asc, mc, vtx = h.ascendant, h.midheaven, h.vertex
+        equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
     ascmc = [asc, mc, ramc, vtx, equasc, 0.0, 0.0, 0.0]
     if flags & _c.FLG_SIDEREAL:
-        ay = _sidereal_ayanamsa(tt, flags)
+        ay = _scalar_ayanamsa(float(tt), flags)[0]
         cusps = [(c - ay) % 360.0 for c in cusps]
         ascmc[0] = (asc - ay) % 360.0
         ascmc[1] = (mc - ay) % 360.0
@@ -1015,12 +1321,14 @@ fixstar2_ut = fixstar_ut
 # ---------------------------------------------------------------------------------------------
 def cotrans(xpo, eps):
     """Rotate (lon, lat, dist) about the x axis by `eps` degrees: ecliptic to equator for positive eps."""
-    lo, la, r = np.radians(xpo[0]), np.radians(xpo[1]), xpo[2]
-    e = np.radians(eps)
-    x, y, z = np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)
-    y2 = y * np.cos(e) - z * np.sin(e)
-    z2 = y * np.sin(e) + z * np.cos(e)
-    return (float(np.degrees(np.arctan2(y2, x)) % 360.0), float(np.degrees(np.arcsin(np.clip(z2, -1, 1)))), float(r))
+    lo, la, r = math.radians(xpo[0]), math.radians(xpo[1]), xpo[2]
+    e = math.radians(eps)
+    cl = math.cos(la)
+    x, y, z = cl * math.cos(lo), cl * math.sin(lo), math.sin(la)
+    ce, se = math.cos(e), math.sin(e)
+    y2 = y * ce - z * se
+    z2 = y * se + z * ce
+    return (math.degrees(math.atan2(y2, x)) % 360.0, math.degrees(math.asin(max(-1.0, min(1.0, z2)))), float(r))
 
 
 def cotrans_sp(xpo, eps):
@@ -1076,7 +1384,7 @@ def azalt_rev(tjd_ut, calc_flag, geopos, xin):
 def _refraction(true_alt, pressure, temp):
     """Atmospheric refraction in degrees (Saemundsson's formula, scaled for pressure and temperature)."""
     h = max(true_alt, -1.5)
-    r = 1.02 / np.tan(np.radians(h + 10.3 / (h + 5.11))) / 60.0
+    r = 1.02 / math.tan(math.radians(h + 10.3 / (h + 5.11))) / 60.0
     return float(r * (pressure / 1010.0) * (283.0 / (273.0 + temp)))
 
 

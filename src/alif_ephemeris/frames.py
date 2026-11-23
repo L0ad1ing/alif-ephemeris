@@ -122,6 +122,10 @@ def _nutation_uncached(jd_tt):
 
 def mean_obliquity(jd_tt):
     """Mean obliquity of the ecliptic, IAU 2006 (radians)."""
+    if np.ndim(jd_tt) == 0:                                  # one date: plain arithmetic
+        t = (float(jd_tt) - J2000) / 36525.0
+        return (84381.406 + t * (-46.836769 + t * (-0.0001831 + t * (0.00200340
+                + t * (-0.000000576 + t * (-0.0000000434)))))) * ASEC2RAD
     t = _centuries(jd_tt)
     arcsec = (84381.406 + t * (-46.836769 + t * (-0.0001831 + t * (0.00200340
               + t * (-0.000000576 + t * (-0.0000000434))))))
