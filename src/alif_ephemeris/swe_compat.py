@@ -1189,6 +1189,21 @@ def _refuse_beyond_polar_circle(name, lat, eps):
         raise Error(f"{name} houses cannot be computed at latitude {lat:.2f} (inside the polar circle)")
 
 
+def _extra_angles(ramc, eps, lat):
+    """(equatorial ascendant, Koch co-ascendant, Munkasey co-ascendant, polar ascendant) in degrees.
+    East point: the ascendant at latitude 0. Koch's co-ascendant: the ascendant at the opposite latitude. Munkasey's:
+    the plain ascendant formula at the co-latitude (90 - latitude), with no check for the side of the horizon. Polar
+    ascendant: the ascendant half a turn of sidereal time later."""
+    equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
+    co1 = float(_houses.ascendant_from(ramc, eps, -lat))
+    th, e = math.radians(ramc), math.radians(eps)
+    colat = math.radians(90.0 - lat)
+    tan_c = math.tan(colat) if abs(lat) > 1e-12 else 1e16
+    co2 = math.degrees(math.atan2(math.cos(th), -(math.sin(th) * math.cos(e) + tan_c * math.sin(e)))) % 360.0
+    pol = float(_houses.ascendant_from(ramc + 180.0, eps, lat))
+    return equasc, co1, co2, pol
+
+
 def _gauquelin_houses(jd_ut, lat, lon, tt, flags):
     ramc = (math.degrees(_gast_rad(jd_ut, tt)) + float(lon)) % 360.0 + _st_offset_deg(jd_ut)
     eps = math.degrees(_true_obliquity_rad(tt))
@@ -1198,11 +1213,11 @@ def _gauquelin_houses(jd_ut, lat, lon, tt, flags):
         raise Error(str(exc))
     h = _houses.compute(ramc, eps, lat, "Porphyry")
     asc, mc, vtx = h.ascendant, h.midheaven, h.vertex
-    ascmc = [asc, mc, ramc, vtx, float(_houses.ascendant_from(ramc, eps, 0.0)), 0.0, 0.0, 0.0]
+    ascmc = [asc, mc, ramc, vtx, *_extra_angles(ramc, eps, lat)]
     if flags & _c.FLG_SIDEREAL:
         ay = _sidereal_ayanamsa(tt, flags)
         cusps = [(c - ay) % 360.0 for c in cusps]
-        for i in (0, 1, 3, 4):
+        for i in (0, 1, 3, 4, 5, 6, 7):
             ascmc[i] = (ascmc[i] - ay) % 360.0
     return tuple(cusps), tuple(ascmc)
 
@@ -1299,14 +1314,13 @@ def houses_ex(jd_ut, lat, lon, hsys=b"P", flags=0):
         equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
     if name in ("Regiomontanus", "Campanus", "Topocentric"):      # for these the Midheaven is the tenth cusp itself
         mc = cusps[9]
-    ascmc = [asc, mc, ramc, vtx, equasc, 0.0, 0.0, 0.0]
+    _eq, co1, co2, pol = _extra_angles(ramc, eps, float(lat))
+    ascmc = [asc, mc, ramc, vtx, equasc, co1, co2, pol]
     if flags & _c.FLG_SIDEREAL:
         ay = _scalar_ayanamsa(float(tt), flags)[0]
         cusps = [(c - ay) % 360.0 for c in cusps]
-        ascmc[0] = (asc - ay) % 360.0
-        ascmc[1] = (mc - ay) % 360.0
-        ascmc[3] = (vtx - ay) % 360.0
-        ascmc[4] = (equasc - ay) % 360.0
+        for i in (0, 1, 3, 4, 5, 6, 7):
+            ascmc[i] = (ascmc[i] - ay) % 360.0
     return tuple(cusps), tuple(ascmc)
 
 
@@ -1322,10 +1336,11 @@ def houses_armc(armc, lat, eps, hsys=b"P"):
         except ValueError as exc:
             raise Error(str(exc))
         h = _houses.compute(armc, eps, lat, "Porphyry")
-        return tuple(cusps), (h.ascendant, h.midheaven, armc % 360.0, h.vertex, 0.0, 0.0, 0.0, 0.0)
+        return tuple(cusps), (h.ascendant, h.midheaven, armc % 360.0, h.vertex, *_extra_angles(armc, eps, float(lat)))
     _refuse_beyond_polar_circle(name, float(lat), float(eps))
     h = _houses.compute(armc, eps, lat, name)
-    return tuple(h.cusps), (h.ascendant, h.midheaven, armc % 360.0, h.vertex, 0.0, 0.0, 0.0, 0.0)
+    mc = h.cusps[9] if name in ("Regiomontanus", "Campanus", "Topocentric") else h.midheaven
+    return tuple(h.cusps), (h.ascendant, mc, armc % 360.0, h.vertex, *_extra_angles(armc, eps, float(lat)))
 
 
 def house_name(hsys):
@@ -1580,6 +1595,31 @@ def lun_eclipse_when(jd_start, ifl=_c.FLG_SWIEPH, ifltype=0, backward=False):
     return ecl.kind, tuple(t)
 
 
+def _local_noon_near(t_ut, t_tt):
+    """The moment the Moon's shadow lies where it is local apparent noon (the Sun on the meridian there), or 0.0."""
+    from . import swe_extras
+    from scipy.optimize import brentq
+
+    def meridian_side(t):                                   # zero when the Sun is on the meridian there, above or below the pole
+        lon = swe_extras.sol_eclipse_where(t, _c.FLG_SWIEPH)[1][0]
+        tt = _tt_from_ut(t)
+        sun = calc(tt, _c.SUN, _c.FLG_SWIEPH | _c.FLG_EQUATORIAL)[0]
+        return math.sin(math.radians(math.degrees(_gast_rad(t, tt)) + lon - sun[0]))
+    try:
+        lo, hi = t_ut - 0.12, t_ut + 0.12
+        grid = [lo + (hi - lo) * i / 16.0 for i in range(17)]
+        vals = [meridian_side(t) for t in grid]
+        roots = []
+        for a, b, fa, fb in zip(grid, grid[1:], vals, vals[1:]):
+            if fa * fb <= 0.0:
+                roots.append(float(brentq(meridian_side, a, b, xtol=1e-8)))
+        if roots:
+            return min(roots, key=lambda t: abs(t - t_ut))
+    except Exception:
+        pass
+    return 0.0
+
+
 def sol_eclipse_when_glob(jd_start, ifl=_c.FLG_SWIEPH, ifltype=0, backward=False):
     """Next (or previous) solar eclipse anywhere on Earth. tret[0] is the time of greatest eclipse, [2] and [3] the
     beginning and end of the eclipse on Earth (UT)."""
@@ -1588,6 +1628,10 @@ def sol_eclipse_when_glob(jd_start, ifl=_c.FLG_SWIEPH, ifltype=0, backward=False
     t = [0.0] * 10
     t[0] = _ut_from_tt(ecl.maximum)
     t[2], t[3] = _ut_from_tt(ecl.begin), _ut_from_tt(ecl.end)
+    t[1] = _local_noon_near(t[0], ecl.maximum)
+    central = eclipses.solar_central_times(_spk(), ecl.maximum) if ecl.kind & _c.ECL_CENTRAL else None
+    if central:
+        (t[4], t[5]), (t[6], t[7]) = ((_ut_from_tt(a), _ut_from_tt(b)) for a, b in central)
     return ecl.kind, tuple(t)
 
 

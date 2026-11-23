@@ -123,3 +123,30 @@ the standard or the more accurate one. Anyone who needs another program's exact 
 the horizon the Sun must be for an object to be seen). The atmosphere and observer arguments are accepted but do not
 change the result. For Sirius the dates agree with Swiss to under half an hour. For planets and other stars they can
 differ by days, because Swiss uses a fuller sky-brightness model. Ours is simpler and is documented as such.
+
+
+## Gap sweep, 2026-11-23
+
+A function-by-function sweep against the reference (bodies, flags, eclipses, stars, houses, time functions) led to these changes:
+
+- `cotrans` and `cotrans_sp` now follow the reference's sign: a negative angle goes from the ecliptic to the equator, a positive
+  one from the equator to the ecliptic. `cotrans_sp` turns the speeds too. (The old sign was reversed.)
+- Every house result now carries all eight angles: Ascendant, Midheaven, ARMC, Vertex, equatorial ascendant, Koch's
+  co-ascendant, Munkasey's co-ascendant and the polar ascendant (they used to be zero). For Regiomontanus, Campanus and
+  Topocentric houses the Midheaven is the tenth cusp.
+- Saros series and member numbers are filled in for solar and lunar eclipses (`attr[9]` and `attr[10]`). The series number
+  follows from the lunation index modulo 223; the member number is found by stepping back through the series. Solar
+  numbers need data back to the series start: with only DE440 a series that began before 1550 gives the series number and
+  member 0.
+- `nod_aps` works for the Moon, mean and osculating.
+- Eclipse results have the reference's shapes (`sol_eclipse_where` gives 10 and 20 numbers, `sol_eclipse_when_loc` gives
+  attributes and visibility flags, annular eclipses at the centre line are flagged annular and central, and
+  `sol_eclipse_when_glob` fills `tret[1]` and `tret[4]` to `tret[7]`).
+- `lat_to_lmt` and `lmt_to_lat` return the Julian day alone; `get_ayanamsa_ex` returns the ephemeris flag bit; fixed stars
+  are labelled `Name,bayer` and `,bayer` lookups and the traditional names Sirrah, Graffias, Sinistra and Muhlifain work;
+  Praesepe, Aculeus, Spiculum and Facies are available as fixed points.
+
+Still different or missing: the house systems APC, Sunshine, Savard-A and Pullen sinusoidal ratio; sidereal mode 36; the
+hypothetical bodies Nibiru (49) and 59; the interpolated lunar apogee and perigee are about 100 arcseconds from the
+reference; nodes and apsides of the planets differ by about 20 arcseconds; barycentric Sun by 14 arcseconds; heliacal events
+use a simple model; `lun_occult_when_glob` leaves `tret[1]` empty.

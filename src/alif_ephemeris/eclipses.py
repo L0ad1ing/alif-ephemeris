@@ -360,3 +360,24 @@ def lunar_eclipse_near(spk, tt_guess):
     res = minimize_scalar(lambda t: _lunar_metrics(spk, t)[0] - _lunar_metrics(spk, t)[2], bounds=(t_full - 0.25, t_full + 0.25),
                           method="bounded", options={"xatol": 1e-4})
     return float(res.x) if res.fun < R_MOON else None
+
+
+def solar_central_times(spk, tmax):
+    """For a central eclipse: (begin, end) of the umbral (or antumbral) phase on Earth, when the umbra's edge first and
+    last touches the silhouette, and (begin, end) of the central line, when the axis itself first and last meets the
+    Earth. All TT; None when the eclipse is not central or a root is not found."""
+    def gap(t):
+        return _solar_axis(spk, t)[3]
+
+    def umb_edge(t):
+        d, pen, umb, g = _solar_axis(spk, t)
+        return g - abs(umb)
+    out = []
+    for fn in (umb_edge, gap):
+        try:
+            if fn(tmax) >= 0.0:
+                return None
+            out.append((float(brentq(fn, tmax - 0.3, tmax, xtol=1e-9)), float(brentq(fn, tmax, tmax + 0.3, xtol=1e-9))))
+        except ValueError:
+            return None
+    return out[0], out[1]
