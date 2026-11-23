@@ -102,6 +102,11 @@ def _find_data_files():
         raise Error("no planetary data file found: set ALIF_EPHEMERIS_FILE to a JPL DE440 .bsp file")
     found, seen = [main], {norm(main)}
     for folder in [os.path.dirname(main)] + folders:            # long range files, when present
+        for name in ("alif_past.bsp", "alif_future.bsp"):       # compact packs cut from DE441 (tools/make_range_pack.py)
+            f = os.path.join(folder, name)
+            if os.path.isfile(f) and norm(f) not in seen:
+                seen.add(norm(f))
+                found.append(f)
         for name in ("de441_part-1.bsp", "de441_part-2.bsp"):
             f = os.path.join(folder, name)
             if os.path.isfile(f) and norm(f) not in seen:
@@ -647,7 +652,7 @@ _SIMPLE_EXCLUDE = _c.FLG_SPEED | _c.FLG_SPEED3 | _c.FLG_SIDEREAL | _c.FLG_XYZ | 
 # ---------------------------------------------------------------------------------------------
 # (days per window, polynomial degree). Each window is fitted to the validated long windows above and checked
 # against them at extra points; where it does not reach 0.0003 arcsec the older path is used.
-_SUBSPAN = {_c.SUN: (8.0, 11), _c.MOON: (0.5, 11), _c.MERCURY: (4.0, 11), _c.VENUS: (8.0, 11), _c.MARS: (8.0, 11),
+_SUBSPAN = {_c.SUN: (8.0, 11), _c.MOON: (1.0, 13), _c.MERCURY: (4.0, 11), _c.VENUS: (8.0, 11), _c.MARS: (8.0, 11),
             _c.JUPITER: (16.0, 11), _c.SATURN: (16.0, 11), _c.URANUS: (16.0, 11), _c.NEPTUNE: (16.0, 11),
             _c.PLUTO: (16.0, 11), _c.MEAN_NODE: (8.0, 9), _c.MEAN_APOG: (8.0, 11), _c.TRUE_NODE: (2.0, 11)}
 _SUBWIN: dict = {}
