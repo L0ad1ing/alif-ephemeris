@@ -1297,6 +1297,8 @@ def houses_ex(jd_ut, lat, lon, hsys=b"P", flags=0):
         cusps = list(h.cusps)
         asc, mc, vtx = h.ascendant, h.midheaven, h.vertex
         equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
+    if name in ("Regiomontanus", "Campanus", "Topocentric"):      # for these the Midheaven is the tenth cusp itself
+        mc = cusps[9]
     ascmc = [asc, mc, ramc, vtx, equasc, 0.0, 0.0, 0.0]
     if flags & _c.FLG_SIDEREAL:
         ay = _scalar_ayanamsa(float(tt), flags)[0]
