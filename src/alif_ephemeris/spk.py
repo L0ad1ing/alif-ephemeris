@@ -86,8 +86,10 @@ class SPK:
         # views into the memory-mapped file: nothing is read until a date in that record is asked for, so the
         # multi-gigabyte DE441 files cost almost no memory
         block = np.asarray(d[a0 - 1:a0 - 1 + rsize * n]).reshape(n, rsize)
-        mid = block[:, 0].copy()
-        radius = block[:, 1].copy()
+        # every record is the same length, so its midpoint and radius follow from the start and the length; reading them
+        # from the file would touch every page of a multi-gigabyte file just to load it (the values are identical)
+        mid = float(init) + float(intlen) * (np.arange(n) + 0.5)
+        radius = np.full(n, float(intlen) / 2.0)
         coeffs = block[:, 2:].reshape(n, 3, n_coef)
         return Segment(target, center, frame, dtype, et0, et1, float(init), float(intlen),
                        n_coef, n, coeffs, mid, radius)
