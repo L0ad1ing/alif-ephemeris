@@ -796,10 +796,10 @@ def _hsys_name(hsys):
         hsys = hsys.decode("ascii")
     if isinstance(hsys, int):
         hsys = chr(hsys)
-    name = _houses.LETTERS.get(hsys)
-    if name is None:
-        raise Error(f"house system {hsys!r} is not available in Alif Ephemeris")
-    return name
+    # like the reference, a letter that names no system falls back to Placidus
+    if hsys in ("I", "i", "J", "Q", "Y"):
+        raise Error(f"house system {hsys!r} (APC, Sunshine, Savard-A, Pullen delta) is not built yet in Alif Ephemeris")
+    return _houses.LETTERS.get(hsys, "Placidus")
 
 
 def _refuse_beyond_polar_circle(name, lat, eps):
