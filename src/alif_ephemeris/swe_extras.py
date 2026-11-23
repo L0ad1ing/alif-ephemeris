@@ -782,6 +782,190 @@ for _n in ("lun_occult_when_glob", "lun_occult_when_loc", "lun_occult_where"):
     globals()[_n] = _wrap(globals()[_n])
 __all__ += ["lun_occult_when_glob", "lun_occult_when_loc", "lun_occult_where"]
 
+# ---------------------------------------------------------------------------------------------
+# heliacal events (classical "arcus visionis" model) and the limiting magnitude
+# ---------------------------------------------------------------------------------------------
+HELIACAL_RISING, HELIACAL_SETTING = 1, 2
+MORNING_FIRST, EVENING_LAST, EVENING_FIRST, MORNING_LAST = 1, 2, 3, 4
+ACRONYCHAL_RISING, ACRONYCHAL_SETTING, COSMICAL_SETTING = 5, 6, 6
+AUNIT_TO_KM, AUNIT_TO_LIGHTYEAR, AUNIT_TO_PARSEC = 149597870.7, 1.5812507409819728e-05, 4.848136811095274e-06
+PHOTOPIC_FLAG, SCOTOPIC_FLAG, MIXEDOPIC_FLAG = 0, 1, 2
+TIDAL_AUTOMATIC, TIDAL_DEFAULT = 999999, -25.8
+TIDAL_DE200, TIDAL_DE403, TIDAL_DE404, TIDAL_DE405, TIDAL_DE406 = -23.8946, -25.580, -25.580, -25.826, -25.826
+TIDAL_DE421, TIDAL_DE430, TIDAL_DE431, TIDAL_DE441 = -25.85, -25.82, -25.80, -25.936
+TIDAL_26 = -26.0
+
+# Ptolemy's arcus visionis (Almagest and Phaseis): how far below the horizon the Sun must be for the object to be seen
+_ARCUS_PLANETS = {"mercury": 10.0, "venus": 5.0, "mars": 14.5, "jupiter": 10.0, "saturn": 11.0, "uranus": 12.0, "neptune": 13.0,
+                  "pluto": 17.0}
+_PLANET_BY_NAME = {"sun": _c.SUN, "moon": _c.MOON, "mercury": _c.MERCURY, "venus": _c.VENUS, "mars": _c.MARS, "jupiter": _c.JUPITER,
+                   "saturn": _c.SATURN, "uranus": _c.URANUS, "neptune": _c.NEPTUNE, "pluto": _c.PLUTO}
+
+
+def _arcus_visionis(name, magnitude):
+    key = name.strip().lower()
+    if key in _ARCUS_PLANETS:
+        return _ARCUS_PLANETS[key]
+    for limit, arc in ((1.5, 12.0), (2.5, 13.0), (3.5, 14.0), (4.5, 15.0), (5.5, 16.0)):
+        if magnitude < limit:
+            return arc
+    return 17.0
+
+
+def _object_magnitude(name, jd_ut):
+    key = name.strip().lower()
+    if key in _PLANET_BY_NAME and key not in ("sun", "moon"):
+        return _s.pheno_ut(jd_ut, _PLANET_BY_NAME[key])[4]
+    return fixstar_mag(name)[0]
+
+
+def _object_altitude(name, jd_ut, site):
+    from . import eclipse_attrs
+    key = name.strip().lower()
+    tt = _s._tt_from_ut(jd_ut)
+    if key in _PLANET_BY_NAME:
+        return eclipse_attrs._horizon(_s._spk(), _s._PLANET_ID_CENTRES[_PLANET_BY_NAME[key]], tt, site, jd_ut)[2]
+    st = _s.fixstar_ut(name, jd_ut, _c.FLG_SWIEPH | _c.FLG_EQUATORIAL)[0]
+    ra, dec = np.radians(st[0]), np.radians(st[1])
+    lst = (math.degrees(_s._gast_rad(jd_ut, tt)) + site[0]) % 360.0
+    ha = math.radians(lst) - ra
+    lat = math.radians(site[1])
+    alt = math.degrees(math.asin(math.sin(lat) * math.sin(dec) + math.cos(lat) * math.cos(dec) * math.cos(ha)))
+    return alt + _refraction_true(alt, 1013.25, 15.0) if alt > -1.0 else alt
+
+
+def _sun_altitude(jd_ut, site):
+    from . import eclipse_attrs
+    return eclipse_attrs._horizon(_s._spk(), _s._PLANET_ID_CENTRES[_c.SUN], _s._tt_from_ut(jd_ut), site, jd_ut)[1]
+
+
+def _event_kind(event_type):
+    """(is_morning, is_first_appearance) for the event types."""
+    return {1: (True, True), 2: (False, False), 3: (False, True), 4: (True, False), 5: (False, True), 6: (True, False)}[int(event_type)]
+
+
+def _visible_on(name, day_start, site, morning, arcus):
+    """Is the object visible on the morning or evening beginning near `day_start` (UT)? Returns (visible, start, end) or None."""
+    # scan the twilight for the moment the Sun is `arcus` degrees below the horizon
+    step = 1.0 / 288.0
+    t = day_start
+    best = None
+    prev = _sun_altitude(t, site)
+    for _ in range(288 * 2):
+        t2 = t + step
+        cur = _sun_altitude(t2, site)
+        down = prev > -arcus >= cur       # Sun sinking through the threshold (evening)
+        up = prev < -arcus <= cur         # Sun rising through the threshold (morning)
+        if (morning and up) or (not morning and down):
+            lo, hi = t, t2
+            for _ in range(30):
+                mid = 0.5 * (lo + hi)
+                a = _sun_altitude(mid, site)
+                if (a < -arcus) == (prev < -arcus):
+                    lo = mid
+                else:
+                    hi = mid
+            best = 0.5 * (lo + hi)
+            break
+        t, prev = t2, cur
+    if best is None:
+        return None
+    return best
+
+
+def heliacal_ut(tjdut, geopos, datm, dobs, objname, event_type, helflag=_c.FLG_SWIEPH, *args):
+    """Next heliacal event of a planet or star. Returns (start of visibility, best moment, end of visibility), UT.
+    Event types: 1 heliacal rising (morning first), 2 heliacal setting (evening last), 3 evening first, 4 morning last.
+    Model: Ptolemy's arcus visionis (classical, documented in docs/SWISS_COMPATIBILITY.md); the atmosphere and observer
+    arguments are accepted for compatibility but do not change the result."""
+    site = _site(geopos)
+    morning, first = _event_kind(event_type)
+    key = objname.strip().lower()
+    if key in ("sun", "moon"):
+        raise Error("heliacal events are for planets and stars")
+    if key in ("mercury", "venus") and event_type in (1, 2):
+        pass
+    elif key in ("mercury", "venus") and event_type in (3, 4):
+        pass
+    elif event_type in (3, 4) and key not in ("mercury", "venus"):
+        raise Error("%s (event type %d) does not exist for %s" % ("evening first" if event_type == 3 else "morning last", event_type, key))
+    mag = _object_magnitude(objname, float(tjdut))
+    arcus = _arcus_visionis(objname, mag)
+    jd0 = float(tjdut)
+    prev_visible = None
+    for day in range(0, 1100):
+        base = jd0 + day
+        moment = _visible_on(objname, base - (0.5 if not morning else 0.0), site, morning, arcus)
+        if moment is None:
+            continue
+        alt = _object_altitude(objname, moment, site)
+        visible = alt >= 0.0
+        if prev_visible is not None:
+            appears = visible and not prev_visible          # becomes visible
+            vanishes = (not visible) and prev_visible       # stops being visible
+            wanted = appears if first else vanishes
+            if wanted:
+                t_event = moment
+                # visibility window: from the object clearing the horizon to the Sun reaching the threshold depression
+                step = 1.0 / 1440.0
+                if morning:
+                    t = moment - 0.1
+                    while t < moment and _object_altitude(objname, t, site) < 0.0:
+                        t += step
+                    start, end = t, moment
+                else:
+                    t = moment + 0.1
+                    while t > moment and _object_altitude(objname, t, site) < 0.0:
+                        t -= step
+                    start, end = moment, t
+                if end < start:
+                    start, end = end, start
+                return (start, 0.5 * (start + end), end)
+        prev_visible = visible
+    raise Error("no %s found within three years" % ("heliacal rising" if event_type == 1 else "heliacal event"))
+
+
+def heliacal_pheno_ut(tjdut, geopos, datm, dobs, objname, event_type, helflag=_c.FLG_SWIEPH):
+    """Numbers behind a heliacal event at a moment: object altitude, Sun altitude, depression of the Sun needed (arcus
+    visionis), the object's magnitude and its elongation from the Sun. Returned as a 50-slot tuple (the rest zero)."""
+    site = _site(geopos)
+    mag = _object_magnitude(objname, float(tjdut))
+    arcus = _arcus_visionis(objname, mag)
+    alt = _object_altitude(objname, float(tjdut), site)
+    sun_alt = _sun_altitude(float(tjdut), site)
+    return (alt, sun_alt, arcus, mag, -sun_alt - arcus) + (0.0,) * 45
+
+
+def vis_limit_mag(tjdut, geopos, datm, dobs, objname, helflag=_c.FLG_SWIEPH):
+    """Faintest magnitude that can be seen at a moment, from the Sun's depression. Returns (1.0, 8 numbers):
+    limiting magnitude, object altitude, object azimuth-free slots as zeros, Sun altitude, object magnitude.
+    Classical model: an object of magnitude m needs the Sun at least `arcus visionis(m)` below the horizon (Ptolemy), which
+    inverts to a limiting magnitude of 1 + (depression - 12) between about -4.6 (day) and 6.5 (dark sky)."""
+    site = _site(geopos)
+    sun_alt = _sun_altitude(float(tjdut), site)
+    depression = max(-sun_alt, 0.0)
+    limit = max(-4.6, min(6.5, 1.0 + (depression - 12.0)))
+    obj_alt = _object_altitude(objname, float(tjdut), site)
+    return 1.0, (limit, obj_alt, 0.0, sun_alt, 0.0, 0.0, 0.0, _object_magnitude(objname, float(tjdut)))
+
+
+def csroundsec(cs):
+    """Round centiseconds to whole seconds, but 29 degrees 59 minutes 59.5 seconds always down (so it never shows 30 degrees)."""
+    cs = int(cs)
+    r = (cs + 50) // 100 * 100
+    if r % (30 * 360000) == 0 and cs % (30 * 360000) != 0:
+        r -= 100
+    return r
+
+
+for _n in ("heliacal_ut", "heliacal_pheno_ut", "vis_limit_mag"):
+    globals()[_n] = _wrap(globals()[_n])
+__all__ += ["heliacal_ut", "heliacal_pheno_ut", "vis_limit_mag", "csroundsec", "HELIACAL_RISING", "HELIACAL_SETTING", "MORNING_FIRST",
+            "EVENING_LAST", "EVENING_FIRST", "MORNING_LAST", "ACRONYCHAL_RISING", "ACRONYCHAL_SETTING", "COSMICAL_SETTING",
+            "AUNIT_TO_KM", "AUNIT_TO_LIGHTYEAR", "AUNIT_TO_PARSEC", "PHOTOPIC_FLAG", "SCOTOPIC_FLAG", "MIXEDOPIC_FLAG", "TIDAL_AUTOMATIC",
+            "TIDAL_DEFAULT", "TIDAL_DE200", "TIDAL_DE403", "TIDAL_DE404", "TIDAL_DE405", "TIDAL_DE406", "TIDAL_DE421", "TIDAL_DE430",
+            "TIDAL_DE431", "TIDAL_DE441", "TIDAL_26"]
+
 calc_pctr = _wrap(calc_pctr)
 __all__.append("calc_pctr")
 gauquelin_sector = _wrap(gauquelin_sector)

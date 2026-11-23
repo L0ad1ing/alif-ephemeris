@@ -116,3 +116,10 @@ Alif Astrology Software's regression suite (about 2,650 tests written against JH
 differences: Rahu and Ketu differ from JHora's by up to 0.1 arcsec (Alif's test allows 0.05), a few dasa start times
 move by minutes, and six global solar-eclipse contact times differ by 2 to 13 seconds. In each case the value we give is
 the standard or the more accurate one. Anyone who needs another program's exact digits can adjust their tolerances.
+
+## Heliacal events and visibility
+
+`heliacal_ut`, `heliacal_pheno_ut` and `vis_limit_mag` are built on the classical arcus visionis rule (how far below
+the horizon the Sun must be for an object to be seen). The atmosphere and observer arguments are accepted but do not
+change the result. For Sirius the dates agree with Swiss to under half an hour. For planets and other stars they can
+differ by days, because Swiss uses a fuller sky-brightness model. Ours is simpler and is documented as such.
