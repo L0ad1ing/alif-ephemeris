@@ -13,6 +13,15 @@ How to rebuild this project from nothing. No secrets are used. The project needs
 
 7. Optional, for dates outside 1550 to 2650: the two DE441 files from `docs/DATA.md` next to `de440.bsp`.
 8. To run Alif Astrology Software's own tests on this library: `tools/alif_shim_plugin.py` (see `docs/SWISS_COMPATIBILITY.md`).
+9. Range packs and compact files (for the installer, optional): `python tools/make_range_pack.py data/raw/de441_part-1.bsp
+   data/packs/alif_past.bsp 1355000 2287300` and the same for part-2 (`alif_future.bsp 2688800 2890000`) cut the years -1000 to 1550
+   and 2650 to 3200 out of DE441. `python tools/make_compact.py` writes `data/compact/*.alz` (about a fifth of the size;
+   `alif_ephemeris.compact.expand` turns one back into a .bsp). The three .alz files are also attached to the GitHub release.
+10. Optional compiled helper for Placidus houses: Visual Studio Build Tools, then `toolsuild_core.bat` (plain Python is used without it).
+11. Speed check against Swiss: `python tools/bench_speed.py <folder with Swiss files>` (needs pyswisseph).
+
+Publishing: the public repo uses the author `AlifAstrology <info@alifastrology.com>`. Never push commits made under the personal
+email, and strip any `Claude-Session:` lines from messages first (`git filter-branch --env-filter ... --msg-filter ...` on the unpushed range).
 
 Where things are: `docs/PLAN.md` (what is done, what is next), `docs/CLEAN_ROOM.md` (hard rules),
 `CLAUDE.md` (working rules), `NOTICE` (credit).
