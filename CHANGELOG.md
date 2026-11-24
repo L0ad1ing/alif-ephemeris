@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+- New house systems, each built from its author's published definition: Pullen sinusoidal ratio (`Q`), Sunshine (`I`, `i`,
+  Makransky) and APC (`Y`, Sunshine's construction on the Ascendant's daily circle). The system the earlier notes called
+  the Pullen ratio (`L`) is Pullen's sinusoidal delta and is now named that. All agree with the reference to a few
+  arcseconds. Savard-A is not built yet.
+- New sidereal mode 36 (E. Wilhelm: the galactic centre in the middle of Mula, by equatorial longitude); about 21
+  arcseconds from the reference.
+- `houses_armc` and `houses_armc_ex2` take the Sun's declination for the Sunshine systems.
+
 ## 1.1.0
 
 Speed
@@ -21,5 +31,4 @@ Swiss-style interface
 - Fixed: `cotrans` and `cotrans_sp` had the opposite sign to the reference; the Midheaven for Regiomontanus, Campanus and
   Topocentric houses; eclipse result shapes, flags and timing entries; star labels and traditional names.
 
-Not built yet: the house systems APC, Sunshine, Savard-A and Pullen sinusoidal ratio; sidereal mode 36; the hypothetical body
-Nibiru; a fuller heliacal model. See docs/SWISS_COMPATIBILITY.md.
+Not built yet: the house system Savard-A; the hypothetical body Nibiru; a fuller heliacal model. See docs/SWISS_COMPATIBILITY.md.
