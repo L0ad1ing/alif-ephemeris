@@ -457,7 +457,7 @@ _THREE_QUADRANT = {
 }
 
 # Swiss-style one-letter codes for people moving from that interface
-LETTERS = {"G": "Gauquelin", "H": "Horizon", "U": "Krusinski", "L": "Pullen SD", "Q": "Pullen SR", "I": "Sunshine", "i": "Sunshine (Makransky)", "P": "Placidus", "K": "Koch", "O": "Porphyry", "R": "Regiomontanus", "C": "Campanus",
+LETTERS = {"G": "Gauquelin", "H": "Horizon", "U": "Krusinski", "L": "Pullen SD", "Q": "Pullen SR", "I": "Sunshine", "i": "Sunshine (Makransky)", "Y": "APC", "P": "Placidus", "K": "Koch", "O": "Porphyry", "R": "Regiomontanus", "C": "Campanus",
            "B": "Alcabitius", "T": "Topocentric", "M": "Morinus", "X": "Meridian", "E": "Equal", "A": "Equal",
            "W": "Whole sign", "V": "Vehlow", "D": "Equal (MC)", "N": "Equal (Aries)", "S": "Sripati",
            "F": "Carter"}
@@ -517,6 +517,19 @@ def compute(ramc_deg, eps_deg, lat_deg, system="Placidus", sun_dec=None):
         res = _sunshine(ramc_deg, eps_deg, lat_deg, sun_dec)
         if res is None:
             notes.append(f"Sunshine houses are undefined where the Sun does not rise or set; Porphyry houses used")
+            res = _porphyry(ramc_deg, eps_deg, lat_deg, arcs, asc, mc)
+            cusp.update({k: _norm360(v) for k, v in res.items()})
+            for k, o in ((5, 11), (6, 12), (8, 2), (9, 3)):
+                cusp[k] = _norm360(cusp[o] + 180.0)
+            system = "Porphyry"
+        else:
+            cusp = {k: float(v) for k, v in res.items()}
+    elif system == "APC":
+        # APC (Ascendant Parallel Circle): Sunshine's construction on the daily circle of the Ascendant point instead of the Sun's
+        dec_asc = float(np.degrees(np.arcsin(np.sin(eps_deg * D2R) * np.sin(asc * D2R))))
+        res = _sunshine(ramc_deg, eps_deg, lat_deg, dec_asc)
+        if res is None:
+            notes.append("APC houses are undefined here (the Ascendant's circle never rises or sets); Porphyry houses used")
             res = _porphyry(ramc_deg, eps_deg, lat_deg, arcs, asc, mc)
             cusp.update({k: _norm360(v) for k, v in res.items()})
             for k, o in ((5, 11), (6, 12), (8, 2), (9, 3)):

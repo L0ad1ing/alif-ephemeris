@@ -1176,8 +1176,8 @@ def _hsys_name(hsys):
     if isinstance(hsys, int):
         hsys = chr(hsys)
     # like the reference, a letter that names no system falls back to Placidus
-    if hsys in ("J", "Y"):
-        raise Error(f"house system {hsys!r} (Savard-A, APC) is not built yet in Alif Ephemeris")
+    if hsys == "J":
+        raise Error("house system 'J' (Savard-A) is not built yet in Alif Ephemeris")
     return _houses.LETTERS.get(hsys, "Placidus")
 
 
