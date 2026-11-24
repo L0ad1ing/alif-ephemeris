@@ -235,3 +235,16 @@ def test_pullen_ratio_and_sunshine_houses(swe):
     assert all(0 < x < 180 for x in spans) and sum(spans) == pytest.approx(360.0, abs=1e-6)
     polar_cusps = swe.houses_armc(armc, 80.0, eps, b"I", 20.0)[0]                    # midnight sun: falls back, still 12 cusps
     assert len(polar_cusps) == 12
+
+
+@needs
+def test_apc_houses_and_wilhelm_ayanamsa(swe):
+    armc, lat, eps = 100.0, 40.0, 23.44
+    cusps, ascmc = swe.houses_armc(armc, lat, eps, b"Y")
+    assert cusps[0] == pytest.approx(ascmc[0], abs=1e-6) and cusps[9] == pytest.approx(ascmc[1], abs=1e-6)
+    spans = [(cusps[(i + 1) % 12] - cusps[i]) % 360 for i in range(12)]
+    assert all(0 < x < 180 for x in spans) and sum(spans) == pytest.approx(360.0, abs=1e-6)
+    swe.set_sid_mode(36)
+    a = swe.get_ayanamsa_ut(2451545.0)
+    assert 19.9 < a < 20.2                                                       # galactic centre held at the middle of Mula
+    swe.set_sid_mode(1)

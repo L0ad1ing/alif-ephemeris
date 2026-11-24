@@ -404,7 +404,7 @@ _SIDM_NAMES = {
     24: "Aryabhata (mean Sun)", 25: "Suryasiddhanta (Revati)", 26: "Suryasiddhanta (Citra)",
     27: "True Chitra (Spica 180)", 28: "True Revati (Zeta Piscium 359-50)", 29: "True Pushya (Delta Cancri 106)",
     30: "Galactic Centre (Gil Brand)", 31: "Galactic equator (IAU 1958)", 32: "Galactic equator (true)",
-    33: "Galactic equator (Mula)", 39: "True Sheoran (Delta Cancri)",
+    33: "Galactic equator (Mula)", 36: "Galactic Centre mid-Mula (Wilhelm)", 39: "True Sheoran (Delta Cancri)",
     34: "Galactic (Mardyks)", 35: "True Mula (Lambda Scorpii 240)", 37: "Aryabhata 522", 38: "Babylonian (Britton)",
     40: "Galactic Centre 0 Capricorn (Cochrane)", 41: "Galactic equator (Fiorenza)", 42: "Valens (Moon)",
     43: "Lahiri 1940", 44: "Lahiri (VP285)", 45: "Krishnamurti (VP291)", 46: "Lahiri (ICRC)",

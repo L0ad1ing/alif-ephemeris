@@ -112,9 +112,23 @@ def galactic_node_longitude(jd_tt):
     return np.mod(np.degrees(np.arctan2(p[..., 0], -ye)), 360.0)
 
 
+def _galactic_centre_equatorial_longitude(jd_tt):
+    """Ecliptic longitude (degrees, mean equinox of date) of the point of the ecliptic that has the galactic centre's right
+    ascension: its "equatorial longitude". The galactic centre is Sgr A* with no proper motion."""
+    jd_tt = np.asarray(jd_tt, dtype=float)
+    ra, dec = np.radians(266.416837), np.radians(-29.007810)
+    d = np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+    v = np.einsum("...ij,j->...i", _precession_matrix(jd_tt), d)
+    ra_d = np.arctan2(v[..., 1], v[..., 0])
+    e = _mean_equator_to_ecliptic(jd_tt)
+    return np.degrees(np.arctan2(np.sin(ra_d), np.cos(ra_d) * np.cos(e))) % 360.0
+
+
 def value(ay: Ayanamsa, jd_tt):
     """Mean ayanamsa in degrees at Terrestrial Time `jd_tt`."""
     jd_tt = np.asarray(jd_tt, dtype=float)
+    if ay.kind == "galactic equatorial":                 # the galactic centre's equatorial longitude, held at ay.target
+        return _galactic_centre_equatorial_longitude(jd_tt) - ay.target
     if ay.kind == "galactic node":                       # a0 is added to (node longitude - 240 degrees)
         return np.mod(galactic_node_longitude(jd_tt) - 240.0 + ay.a0 + 180.0, 360.0) - 180.0
     if ay.kind == "fixed point":
@@ -165,6 +179,8 @@ register(Ayanamsa("Galactic equator (true)", "galactic node", a0=0.05292,
                   source="the IAU 1958 galactic equator node, with the true-equator shift of 0.05292 degrees"))
 register(Ayanamsa("Galactic equator (Mula)", "galactic node", a0=-6.613747,
                   source="the IAU 1958 galactic equator node moved to the Mula nakshatra start"))
+register(Ayanamsa("Galactic Centre mid-Mula (Wilhelm)", "galactic equatorial", target=246.0 + 40.0 / 60.0,
+                  source="E. Wilhelm: the galactic centre in the middle of Mula (246 deg 40 min), by equatorial longitude"))
 register(Ayanamsa("Galactic Centre 0 Capricorn (Cochrane)", "star", star=_GALACTIC_CENTRE, target=270.0,
                   source="the galactic centre at 0 deg Capricorn"))
 

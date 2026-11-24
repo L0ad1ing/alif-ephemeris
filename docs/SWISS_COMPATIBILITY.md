@@ -91,7 +91,7 @@ gives the physically better planet centres with the newest orbits, as NASA Horiz
 - **Krusinski-Pisa-Goelzer** (`U`) and **Horizon** (`H`): exact (0.0000 arcsec against the reference at random places, polar ones included).
 - **Gauquelin sectors** (`G`): 36 sector boundaries, exact to 1 arcsec near the polar circle and better elsewhere; refused inside the polar circle as in the reference.
 - **Pullen sinusoidal delta** (`L`) and **ratio** (`Q`), and **Sunshine** (`I`, `i`): built from the authors' published definitions and agree with the reference to a few arcseconds (Sunshine differs only where the Sun does not rise or set).
-- Not built: APC, Savard-A.
+- **APC** (`Y`): agrees to about 10 arcseconds. Not built: Savard-A.
 
 ## Stars and sidereal modes (2026-11-22)
 - Fixed stars can be given as an IAU name, a Hipparcos number, or a Bayer code the way astrology software writes it
@@ -99,7 +99,7 @@ gives the physically better planet centres with the newest orbits, as NASA Horiz
 - The "true star" sidereal modes (True Citra, True Revati, True Pushya, True Mula) and the galactic-centre modes hold
   the star at its target using the apparent position with annual aberration but without nutation, as the reference
   does (they agree to 0.3 arcsec). The core library's value leaves the aberration out.
-- Sidereal modes 30, 31, 32, 33 and 39 are built from their published definitions and agree with the reference to about 0.2 arcsec. Mode 36 (Wilhelm galactic centre at Mula) is not available.
+- Sidereal modes 30, 31, 32, 33 and 39 are built from their published definitions and agree with the reference to about 0.2 arcsec. Mode 36 (Wilhelm: the galactic centre in the middle of Mula, by equatorial longitude) is built from that description and is about 21 arcsec from the reference.
 
 ## Bodies added late on 2026-11-22
 - **Vulcan** (`VULCAN`): a heliocentric orbit fitted to the reference over a century (a 0.13744 AU, e 0.019, i 7.5 degrees,
