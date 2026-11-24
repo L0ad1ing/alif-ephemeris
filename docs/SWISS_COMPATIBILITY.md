@@ -90,8 +90,8 @@ gives the physically better planet centres with the newest orbits, as NASA Horiz
 ## House systems added on 2026-11-22
 - **Krusinski-Pisa-Goelzer** (`U`) and **Horizon** (`H`): exact (0.0000 arcsec against the reference at random places, polar ones included).
 - **Gauquelin sectors** (`G`): 36 sector boundaries, exact to 1 arcsec near the polar circle and better elsewhere; refused inside the polar circle as in the reference.
-- **Pullen sinusoidal ratio** (`L`): exact. Pullen sinusoidal delta (`Q`) is not built.
-- Not built: APC, Sunshine, Savard-A, Pullen sinusoidal delta.
+- **Pullen sinusoidal delta** (`L`) and **ratio** (`Q`), and **Sunshine** (`I`, `i`): built from the authors' published definitions and agree with the reference to a few arcseconds (Sunshine differs only where the Sun does not rise or set).
+- Not built: APC, Savard-A.
 
 ## Stars and sidereal modes (2026-11-22)
 - Fixed stars can be given as an IAU name, a Hipparcos number, or a Bayer code the way astrology software writes it
@@ -146,7 +146,7 @@ A function-by-function sweep against the reference (bodies, flags, eclipses, sta
   are labelled `Name,bayer` and `,bayer` lookups and the traditional names Sirrah, Graffias, Sinistra and Muhlifain work;
   Praesepe, Aculeus, Spiculum and Facies are available as fixed points.
 
-Still different or missing: the house systems APC, Sunshine, Savard-A and Pullen sinusoidal ratio; sidereal mode 36; the
+Still different or missing: the house systems APC and Savard-A; sidereal mode 36; the
 hypothetical bodies Nibiru (49) and 59; the interpolated lunar apogee and perigee are about 100 arcseconds from the
 reference; nodes and apsides of the planets differ by about 20 arcseconds; barycentric Sun by 14 arcseconds; heliacal events
 use a simple model; `lun_occult_when_glob` leaves `tret[1]` empty.

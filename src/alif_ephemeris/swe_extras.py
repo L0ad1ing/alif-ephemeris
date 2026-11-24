@@ -750,10 +750,10 @@ def houses_ex2(tjdut, lat, lon, hsys=b"P", flags=0):
 
 def houses_armc_ex2(armc, lat, eps, hsys=b"P", ascmc9=0.0):
     """Like houses_armc, plus speeds in degrees per day for a sidereal rotation of 360.9856 degrees per day."""
-    cusps, ascmc = _s.houses_armc(armc, lat, eps, hsys)
+    cusps, ascmc = _s.houses_armc(armc, lat, eps, hsys, ascmc9)
     h = 0.001                                                               # degrees of ARMC
-    cp, ap = _s.houses_armc(armc + h, lat, eps, hsys)
-    cm, am = _s.houses_armc(armc - h, lat, eps, hsys)
+    cp, ap = _s.houses_armc(armc + h, lat, eps, hsys, ascmc9)
+    cm, am = _s.houses_armc(armc - h, lat, eps, hsys, ascmc9)
     rate = 360.9856473 / (2 * h)
     cs = tuple(((a - b + 180.0) % 360.0 - 180.0) * rate for a, b in zip(cp, cm))
     asp = [((a - b + 180.0) % 360.0 - 180.0) * rate for a, b in zip(ap, am)]

@@ -149,14 +149,14 @@ def test_house_speeds_and_true_horizon(swe):
 
 def test_new_house_systems_are_well_formed(swe):
     armc, lat, eps = 100.0, 40.0, 23.44
-    for letter in (b"L", b"U", b"H"):
+    for letter in (b"L", b"Q", b"U", b"H"):
         cusps, ascmc = swe.houses_armc(armc, lat, eps, letter)
         assert len(cusps) == 12 and all(0 <= c < 360 for c in cusps)
         assert abs((cusps[6] - cusps[0] + 180) % 360 - 180) == pytest.approx(180.0, abs=1e-6)      # cusp 7 opposes cusp 1
     sr = swe.houses_armc(armc, lat, eps, b"L")[0]
     mc = swe.houses_armc(armc, lat, eps, b"L")[1][1]
     q = (swe.houses_armc(armc, lat, eps, b"L")[1][0] - mc) % 360
-    assert (sr[10] - mc) % 360 == pytest.approx(q / 4 + 7.5, abs=1e-9)                              # Pullen SR outer house width
+    assert (sr[10] - mc) % 360 == pytest.approx(q / 4 + 7.5, abs=1e-9)                              # Pullen SD outer house width
 
 
 def test_gauquelin_sector_houses(swe):
@@ -214,3 +214,24 @@ def test_vulcan_waldemath_and_perigee_exist(swe):
     perigee = swe.calc_ut(jd, swe.INTP_PERG, swe.FLG_SWIEPH)[0]
     apogee = swe.calc_ut(jd, swe.INTP_APOG, swe.FLG_SWIEPH)[0]
     assert perigee[2] < apogee[2] and abs(perigee[1] + apogee[1]) < 3                      # nearer, and the latitudes are opposite
+
+
+@needs
+def test_pullen_ratio_and_sunshine_houses(swe):
+    armc, lat, eps = 100.0, 40.0, 23.44
+    cusps, ascmc = swe.houses_armc(armc, lat, eps, b"Q")
+    asc, mc = ascmc[0], ascmc[1]
+    # Pullen sinusoidal ratio: houses 10, 11, 12 are r x, x, r x and houses 7, 8, 9 are r^3 x, r^4 x, r^3 x
+    h10, h11, h12 = (cusps[10] - mc) % 360, (cusps[11] - cusps[10]) % 360, (asc - cusps[11]) % 360
+    assert h10 == pytest.approx(h12, abs=1e-9)
+    q = (asc - mc) % 360
+    if q < 90:
+        r = h10 / h11
+        assert q * r ** 3 * (r + 2) / (2 * r + 1) == pytest.approx(180 - q, abs=1e-6)
+    # Sunshine houses: sunrise gives the Ascendant, noon the Midheaven, the cusps keep their order around the zodiac
+    cusps, ascmc = swe.houses_armc(armc, lat, eps, b"I", 12.0)                      # the Sun at declination 12 degrees
+    assert cusps[0] == pytest.approx(ascmc[0], abs=1e-6) and cusps[9] == pytest.approx(ascmc[1], abs=1e-6)
+    spans = [(cusps[(i + 1) % 12] - cusps[i]) % 360 for i in range(12)]
+    assert all(0 < x < 180 for x in spans) and sum(spans) == pytest.approx(360.0, abs=1e-6)
+    polar_cusps = swe.houses_armc(armc, 80.0, eps, b"I", 20.0)[0]                    # midnight sun: falls back, still 12 cusps
+    assert len(polar_cusps) == 12

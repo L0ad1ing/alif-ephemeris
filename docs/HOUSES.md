@@ -34,7 +34,10 @@ sidereal time. Measured against Swiss Ephemeris used as a numerical reference, o
   attempt failed because this rule was missing. Exact against the reference.
 - **Krusinski-Pisa-Goelzer**: the great circle through the Ascendant and the zenith is cut into twelve equal arcs from
   the Ascendant towards the nadir and each division is carried to the ecliptic along its hour circle. Exact.
-- **Pullen sinusoidal ratio**: in each quadrant of size Q the two outer houses are Q/4 + 7.5 degrees wide and the
+- **Pullen sinusoidal delta** (letter L; the earlier docs called it the ratio): same description as below.
+- **Pullen sinusoidal ratio** (letter Q) in Pullen's own published definition: a small quadrant q holds houses r x, x, r x (x = q / (2r + 1)) and the large quadrant r^3 x, r^4 x, r^3 x; r solves q r^3 (r + 2) / (2r + 1) = 180 - q. The old description of the outer houses (Q/4 + 7.5) is Pullen's sinusoidal delta.
+- **Sunshine** (letters I and i, Makransky): the Sun's daily circle is cut into six equal parts of hour angle by day and six by night; each point is carried onto the ecliptic along the great circle through it and the north and south points of the horizon. It needs the Sun's declination (computed from the date; `houses_armc` takes it as the last argument). Where the Sun neither rises nor sets the result falls back to Porphyry.
+- **Pullen sinusoidal ratio** (old note): in each quadrant of size Q the two outer houses are Q/4 + 7.5 degrees wide and the
   middle one is Q/2 - 15 degrees. Exact.
 - **Gauquelin sectors** (`gauquelin_sectors`): 36 sectors, each an equal share of the diurnal or nocturnal arc of
   its own boundary point (the Placidus idea with 36 parts). Sector 1 starts at the Ascendant.

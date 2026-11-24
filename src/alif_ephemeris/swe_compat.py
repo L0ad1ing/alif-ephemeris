@@ -1176,8 +1176,8 @@ def _hsys_name(hsys):
     if isinstance(hsys, int):
         hsys = chr(hsys)
     # like the reference, a letter that names no system falls back to Placidus
-    if hsys in ("I", "i", "J", "Q", "Y"):
-        raise Error(f"house system {hsys!r} (APC, Sunshine, Savard-A, Pullen delta) is not built yet in Alif Ephemeris")
+    if hsys in ("J", "Y"):
+        raise Error(f"house system {hsys!r} (Savard-A, APC) is not built yet in Alif Ephemeris")
     return _houses.LETTERS.get(hsys, "Placidus")
 
 
@@ -1308,7 +1308,8 @@ def houses_ex(jd_ut, lat, lon, hsys=b"P", flags=0):
     if fast is not None:
         cusps, asc, mc, vtx, equasc = fast
     else:
-        h = _houses.compute(ramc, eps, lat, name)
+        sun_dec = calc(tt, _c.SUN, _c.FLG_SWIEPH | _c.FLG_EQUATORIAL)[0][1] if name.startswith("Sunshine") else None
+        h = _houses.compute(ramc, eps, lat, name, sun_dec)
         cusps = list(h.cusps)
         asc, mc, vtx = h.ascendant, h.midheaven, h.vertex
         equasc = float(_houses.ascendant_from(ramc, eps, 0.0))
@@ -1328,7 +1329,7 @@ def houses(jd_ut, lat, lon, hsys=b"P"):
     return houses_ex(jd_ut, lat, lon, hsys, 0)
 
 
-def houses_armc(armc, lat, eps, hsys=b"P"):
+def houses_armc(armc, lat, eps, hsys=b"P", sun_dec=None):
     name = _hsys_name(hsys)
     if name == "Gauquelin":
         try:
@@ -1338,7 +1339,7 @@ def houses_armc(armc, lat, eps, hsys=b"P"):
         h = _houses.compute(armc, eps, lat, "Porphyry")
         return tuple(cusps), (h.ascendant, h.midheaven, armc % 360.0, h.vertex, *_extra_angles(armc, eps, float(lat)))
     _refuse_beyond_polar_circle(name, float(lat), float(eps))
-    h = _houses.compute(armc, eps, lat, name)
+    h = _houses.compute(armc, eps, lat, name, sun_dec)
     mc = h.cusps[9] if name in ("Regiomontanus", "Campanus", "Topocentric") else h.midheaven
     return tuple(h.cusps), (h.ascendant, mc, armc % 360.0, h.vertex, *_extra_angles(armc, eps, float(lat)))
 

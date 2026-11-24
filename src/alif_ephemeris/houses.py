@@ -270,11 +270,89 @@ def _carter(ramc, eps, lat, arcs, asc, mc):
     return {h: float(_lon_of_ra(ra_asc + 30.0 * (h - 1), eps)) for h in range(1, 13)}
 
 
+# -- Sunshine houses (Bob Makransky): the Sun's own daily circle sets the cusps -----------------------------------------------
+
+def _sunshine(ramc, eps, lat, sun_dec):
+    """Cusps 1 to 12 of Makransky's Sunshine houses, or None when the Sun does not rise or set at this place.
+
+    The Sun's daily circle (the small circle through the Sun parallel to the equator) is cut into six equal parts of
+    hour angle between sunrise and sunset, and six between sunset and sunrise. Each of the twelve points is carried onto
+    the ecliptic along the great circle through it and the north and south points of the horizon. Sunrise gives the
+    Ascendant, noon the Midheaven, sunset the Descendant and midnight the IC."""
+    th, e, ph, dl = ramc * D2R, eps * D2R, lat * D2R, sun_dec * D2R
+    c = -np.tan(ph) * np.tan(dl)
+    if abs(c) >= 1.0:
+        return None
+    h0 = float(np.arccos(c))                                   # the Sun's semi-diurnal arc
+    north = np.array([-np.sin(ph), 0.0, np.cos(ph)])            # frame: x on the meridian at the equator, y east, z north
+    pole = np.array([0.0, -np.sin(e), np.cos(e)])               # the ecliptic pole with x at the vernal equinox
+    pole = np.array([pole[0] * np.cos(th) + pole[1] * np.sin(th), -pole[0] * np.sin(th) + pole[1] * np.cos(th), pole[2]])
+
+    def cusp(ha):
+        p = np.array([np.cos(dl) * np.cos(ha), -np.cos(dl) * np.sin(ha), np.sin(dl)])
+        w = p - (p @ north) * north
+        w /= np.linalg.norm(w)
+        n = np.cross(north, p)
+        n /= np.linalg.norm(n)
+        d = np.cross(n, pole)
+        d /= np.linalg.norm(d)
+        x = d if d @ w > 0 else -d                              # the intersection on the half circle through the point
+        xv = np.array([x[0] * np.cos(th) - x[1] * np.sin(th), x[0] * np.sin(th) + x[1] * np.cos(th), x[2]])
+        return float(np.degrees(np.arctan2(xv[1] * np.cos(e) + xv[2] * np.sin(e), xv[0])) % 360.0)
+
+    out = {}
+    for j, house in enumerate((1, 12, 11, 10, 9, 8, 7)):                         # sunrise to sunset
+        out[house] = cusp(-h0 + j * (2.0 * h0) / 6.0)
+    for j, house in enumerate((7, 6, 5, 4, 3, 2, 1)):                            # sunset to sunrise
+        if house not in (7, 1):
+            out[house] = cusp(h0 + j * (2.0 * np.pi - 2.0 * h0) / 6.0)
+    return out
+
+
 # -- Pullen systems: each quadrant's three houses are narrow-wide-narrow (the two outer houses are equal) ---------
 
-def _pullen_sr_outer(q):
-    """Pullen sinusoidal ratio: the middle house differs from the outer ones by (q - 90) / 4 degrees."""
+def _pullen_sd_outer(q):
+    """Pullen sinusoidal delta (W. Pullen's published definition). In the small quadrant (size q) the middle house is
+    x = (q - 30) / 2 and the outer houses x + n with n = (90 - q) / 4; the outer house is therefore q / 4 + 7.5. The same
+    formula carries over to a large quadrant (its outer houses are the same function of its size)."""
+    if q < 30.0:                                       # a quadrant this narrow cannot hold a middle house: it gets size 0
+        return q / 2.0
     return q / 4.0 + 7.5
+
+
+def _sinusoidal_ratio(q):
+    """Ratio r >= 1 of Pullen's sinusoidal-ratio system for a small quadrant q (degrees, 0 < q <= 90). The small quadrant
+    holds houses of sizes r x, x, r x (so x = q / (2 r + 1)); the large quadrant holds r^3 x, r^4 x, r^3 x and fills
+    180 - q: q r^3 (r + 2) / (2 r + 1) = 180 - q. The left side grows with r, so bisection finds r."""
+    if q >= 90.0:
+        return 1.0
+    target = 180.0 - q
+    lo, hi = 1.0, 2.0
+    while q * hi ** 3 * (hi + 2.0) / (2.0 * hi + 1.0) < target and hi < 1e12:
+        hi *= 2.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if q * mid ** 3 * (mid + 2.0) / (2.0 * mid + 1.0) < target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def _pullen_sr_outer(q):
+    """Outer house width of a quadrant of size q (0 < q < 180) in Pullen's sinusoidal-ratio system. A quadrant smaller
+    than 90 degrees has outer houses r x and a middle house x; a larger one has outer houses r^3 x and a middle house
+    r^4 x, where the ratio r comes from the complementary small quadrant (180 - q)."""
+    if q <= 0.0:
+        return 0.0
+    if q <= 90.0:
+        r = _sinusoidal_ratio(q)
+        return r * q / (2.0 * r + 1.0)
+    small = 180.0 - q
+    if small <= 0.0:
+        return q / 3.0
+    r = _sinusoidal_ratio(small)
+    return r ** 3 * small / (2.0 * r + 1.0)
 
 
 def _pullen(outer_fn):
@@ -375,11 +453,11 @@ def _porphyry(ramc, eps, lat, arcs, asc, mc):
 _THREE_QUADRANT = {
     "Placidus": _placidus, "Koch": _koch, "Regiomontanus": _regiomontanus, "Campanus": _campanus,
     "Alcabitius": _alcabitius, "Topocentric": _topocentric, "Morinus": _morinus, "Meridian": _meridian,
-    "Porphyry": _porphyry, "Carter": _carter, "Krusinski": _krusinski, "Horizon": _horizon_houses, "Pullen SR": _pullen(_pullen_sr_outer),
+    "Porphyry": _porphyry, "Carter": _carter, "Krusinski": _krusinski, "Horizon": _horizon_houses, "Pullen SD": _pullen(_pullen_sd_outer), "Pullen SR": _pullen(_pullen_sr_outer),
 }
 
 # Swiss-style one-letter codes for people moving from that interface
-LETTERS = {"G": "Gauquelin", "H": "Horizon", "U": "Krusinski", "L": "Pullen SR", "P": "Placidus", "K": "Koch", "O": "Porphyry", "R": "Regiomontanus", "C": "Campanus",
+LETTERS = {"G": "Gauquelin", "H": "Horizon", "U": "Krusinski", "L": "Pullen SD", "Q": "Pullen SR", "I": "Sunshine", "i": "Sunshine (Makransky)", "P": "Placidus", "K": "Koch", "O": "Porphyry", "R": "Regiomontanus", "C": "Campanus",
            "B": "Alcabitius", "T": "Topocentric", "M": "Morinus", "X": "Meridian", "E": "Equal", "A": "Equal",
            "W": "Whole sign", "V": "Vehlow", "D": "Equal (MC)", "N": "Equal (Aries)", "S": "Sripati",
            "F": "Carter"}
@@ -397,7 +475,7 @@ class Houses:
     notes: list = field(default_factory=list)
 
 
-def compute(ramc_deg, eps_deg, lat_deg, system="Placidus"):
+def compute(ramc_deg, eps_deg, lat_deg, system="Placidus", sun_dec=None):
     """House cusps for a right ascension of the Midheaven, true obliquity and latitude (all degrees)."""
     system = LETTERS.get(system, system)
     asc = float(ascendant_from(ramc_deg, eps_deg, lat_deg))
@@ -433,6 +511,19 @@ def compute(ramc_deg, eps_deg, lat_deg, system="Placidus"):
     elif system == "Whole sign":
         start = np.floor(asc / 30.0) * 30.0
         cusp = {k: _norm360(start + 30.0 * (k - 1)) for k in range(1, 13)}
+    elif system in ("Sunshine", "Sunshine (Makransky)"):
+        if sun_dec is None:
+            raise ValueError("Sunshine houses need the Sun's declination")
+        res = _sunshine(ramc_deg, eps_deg, lat_deg, sun_dec)
+        if res is None:
+            notes.append(f"Sunshine houses are undefined where the Sun does not rise or set; Porphyry houses used")
+            res = _porphyry(ramc_deg, eps_deg, lat_deg, arcs, asc, mc)
+            cusp.update({k: _norm360(v) for k, v in res.items()})
+            for k, o in ((5, 11), (6, 12), (8, 2), (9, 3)):
+                cusp[k] = _norm360(cusp[o] + 180.0)
+            system = "Porphyry"
+        else:
+            cusp = {k: float(v) for k, v in res.items()}
     elif system == "Sripati":
         p = compute(ramc_deg, eps_deg, lat_deg, "Porphyry").cusps
         # Sripati cusps are the midpoints between consecutive Porphyry cusps
