@@ -52,6 +52,8 @@ A free, open-source ephemeris for astrology and astronomy software, by [AlifAstr
 
 ## Quick start
 
+Install with `pip install alif-ephemeris`. It needs `numpy` and `scipy`, and NASA's free planet file (see `docs/DATA.md`).
+
 ```python
 from alif_ephemeris import Ephemeris, MOON, julian_day
 
@@ -68,7 +70,7 @@ Install for development: `pip install -e ".[dev]"` then `python -m pytest` (test
 
 Alif Ephemeris was built so you do not need to pay for, or open-source your code because of, the Swiss Ephemeris.
 
-1. Install it: `pip install git+https://github.com/L0ad1ing/alif-ephemeris` (it needs `numpy` and `scipy`).
+1. Install it: `pip install alif-ephemeris` (it needs `numpy` and `scipy`).
 2. Download NASA's free planet file once (`de440.bsp`, 114 MB, see `docs/DATA.md`) and point to it:
    `ALIF_EPHEMERIS_FILE=/path/to/de440.bsp`.
 3. Software written for the Swiss `swisseph` module runs unchanged. Put our adapter under that name before the

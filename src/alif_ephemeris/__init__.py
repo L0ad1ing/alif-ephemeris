@@ -9,4 +9,4 @@ from .timescales import (  # noqa: F401
     julian_day, calendar_date, delta_t, delta_t_uncertainty, ut_to_tt, tt_to_tdb,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"

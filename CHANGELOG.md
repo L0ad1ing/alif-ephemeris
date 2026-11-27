@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Now on PyPI: `pip install alif-ephemeris`. The README says so. No change to the code or the results.
+
 ## 1.2.0
 
 - New house systems, each built from its author's published definition: Pullen sinusoidal ratio (`Q`), Sunshine (`I`, `i`,
